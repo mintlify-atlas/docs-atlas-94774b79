@@ -1,0 +1,217 @@
+---
+title: primitives.keypair()
+description: Creates an Ed25519 keypair for use with HTTP message signatures
+---
+
+## Overview
+
+The `primitives.keypair()` function generates a new Ed25519 keypair or reuses an existing private key. This is a low-level primitive that doesn't register the agent with Vestauth.
+
+<Info>
+  For most use cases, use `agent.init()` instead, which both creates a keypair AND registers it with Vestauth. Use `primitives.keypair()` only when you need manual control over key generation.
+</Info>
+
+## Signature
+
+```typescript
+primitives.keypair(
+  existingPrivateJwk?: string,
+  prefix?: string
+): Keypair
+```
+
+## Parameters
+
+<ParamField path="existingPrivateJwk" type="string" default="undefined">
+  An existing private JWK as a JSON string. If provided, the keypair will be derived from this key instead of generating a new one.
+  
+  ```typescript
+  {
+    kty: 'OKP',
+    crv: 'Ed25519',
+    x: string,
+    d: string,  // private key component
+    kid?: string
+  }
+  ```
+</ParamField>
+
+<ParamField path="prefix" type="string" default="agent">
+  A prefix used internally for key identification. Typically left as default.
+</ParamField>
+
+## Return Value
+
+Returns a `Keypair` object containing both public and private JWKs:
+
+<ResponseField name="publicJwk" type="PublicJwk" required>
+  The public key in JWK format.
+  
+  ```typescript
+  {
+    kty: 'OKP',
+    crv: 'Ed25519',
+    x: string,
+    kid: string  // RFC 7638 thumbprint
+  }
+  ```
+</ResponseField>
+
+<ResponseField name="privateJwk" type="PrivateJwk" required>
+  The private key in JWK format.
+  
+  ```typescript
+  {
+    kty: 'OKP',
+    crv: 'Ed25519',
+    x: string,
+    d: string,  // private component
+    kid: string  // RFC 7638 thumbprint
+  }
+  ```
+</ResponseField>
+
+## Example - Generate New Keypair
+
+```javascript
+import { primitives } from 'vestauth'
+
+// Generate a fresh Ed25519 keypair
+const keypair = primitives.keypair()
+
+console.log('Public Key:', keypair.publicJwk)
+console.log('Private Key:', keypair.privateJwk)
+
+// Save the private key securely
+const privateKeyString = JSON.stringify(keypair.privateJwk)
+// Store privateKeyString in a secure location
+```
+
+## Example - Reuse Existing Private Key
+
+```javascript
+import { primitives } from 'vestauth'
+
+// Reuse an existing private key
+const existingPrivateJwk = JSON.stringify({
+  kty: 'OKP',
+  crv: 'Ed25519',
+  x: 'MYf21IkWEi6dXOtzUdbll3SMCaFiSFi4KgqktFZinCE',
+  d: 'eScKeQcawvvRiBuA_-gWaAP7PZ3UUGPqJv7jks5tFVI'
+})
+
+const keypair = primitives.keypair(existingPrivateJwk)
+
+// The keypair will use the same private key, with kid calculated
+console.log('Key ID:', keypair.publicJwk.kid)
+```
+
+## Example Output
+
+```javascript
+{
+  publicJwk: {
+    kty: 'OKP',
+    crv: 'Ed25519',
+    x: 'MYf21IkWEi6dXOtzUdbll3SMCaFiSFi4KgqktFZinCE',
+    kid: 'rBE7_zLOVYk4oYEdI-01qpXHWNMyZYD-4LEf6HiyZ9Q'
+  },
+  privateJwk: {
+    kty: 'OKP',
+    crv: 'Ed25519',
+    x: 'MYf21IkWEi6dXOtzUdbll3SMCaFiSFi4KgqktFZinCE',
+    d: 'eScKeQcawvvRiBuA_-gWaAP7PZ3UUGPqJv7jks5tFVI',
+    kid: 'rBE7_zLOVYk4oYEdI-01qpXHWNMyZYD-4LEf6HiyZ9Q'
+  }
+}
+```
+
+## Key ID (kid)
+
+The `kid` (Key ID) field is automatically calculated using the RFC 7638 JWK thumbprint algorithm. This provides a consistent, collision-resistant identifier for the public key.
+
+```javascript
+import { primitives } from 'vestauth'
+
+const kp1 = primitives.keypair()
+const kp2 = primitives.keypair(JSON.stringify(kp1.privateJwk))
+
+// Same private key = same kid
+console.log(kp1.publicJwk.kid === kp2.publicJwk.kid) // true
+```
+
+## Secure Storage
+
+<Warning>
+  The private key (`privateJwk.d`) must be kept secret. Never:
+  - Commit it to version control
+  - Send it over unencrypted connections
+  - Log it to console in production
+  - Expose it in client-side code
+</Warning>
+
+```javascript
+import { primitives } from 'vestauth'
+import fs from 'fs'
+
+// Generate keypair
+const keypair = primitives.keypair()
+
+// Store private key securely (example - use proper secrets management)
+const privateKeyJson = JSON.stringify(keypair.privateJwk)
+fs.writeFileSync('.secrets/private.key', privateKeyJson, { mode: 0o600 })
+
+// Share public key freely
+const publicKeyJson = JSON.stringify(keypair.publicJwk)
+fs.writeFileSync('public.key', publicKeyJson)
+```
+
+## Integration with Other Methods
+
+```javascript
+import { primitives } from 'vestauth'
+
+// 1. Generate keypair
+const keypair = primitives.keypair()
+
+// 2. Use it to sign requests
+const uid = 'my-agent-uid'
+const headers = await primitives.headers(
+  'POST',
+  'https://api.example.com/data',
+  uid,
+  JSON.stringify(keypair.privateJwk)
+)
+
+// 3. Make authenticated request
+const response = await fetch('https://api.example.com/data', {
+  method: 'POST',
+  headers: {
+    ...headers,
+    'Content-Type': 'application/json'
+  },
+  body: JSON.stringify({ data: 'example' })
+})
+```
+
+## Algorithm Details
+
+Vestauth uses the **Ed25519** signature algorithm:
+
+- **Key Type**: OKP (Octet String Key Pairs)
+- **Curve**: Ed25519
+- **Key Size**: 256 bits
+- **Signature Size**: 512 bits
+- **Security Level**: ~128 bits
+
+Ed25519 provides:
+- Fast signature generation and verification
+- Small key and signature sizes
+- Resistance to side-channel attacks
+- No need for random number generation during signing
+
+## Related Methods
+
+- [agent.init()](/api/agent/init) - Generate keypair AND register with Vestauth
+- [primitives.headers()](/api/primitives/headers) - Sign requests with a keypair
+- [primitives.verify()](/api/primitives/verify) - Verify signatures using a public key

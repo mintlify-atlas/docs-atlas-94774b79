@@ -1,0 +1,512 @@
+---
+title: 'Primitives API'
+description: 'Low-level cryptographic operations for Ed25519 signing and verification'
+---
+
+## Overview
+
+The Primitives API provides low-level cryptographic functions for generating keypairs, creating signatures, and verifying signed requests. Unlike the Agent API, primitives do not read from environment variables and require all parameters to be explicitly provided.
+
+```javascript
+const vestauth = require('vestauth')
+
+// Generate keypair
+const kp = vestauth.primitives.keypair()
+
+// Generate headers
+const headers = await vestauth.primitives.headers(
+  'GET',
+  'https://api.example.com/data',
+  'agent-123',
+  JSON.stringify(kp.privateJwk)
+)
+
+// Verify request
+const result = await vestauth.primitives.verify(
+  'GET',
+  'https://api.example.com/data',
+  headers,
+  kp.publicJwk
+)
+```
+
+---
+
+## primitives.keypair()
+
+Generates an Ed25519 keypair for signing and verification. If an existing private key is provided, it is reused and the public key is derived.
+
+### Signature
+
+```typescript
+primitives.keypair(
+  existingPrivateJwk?: string,
+  prefix?: string
+): Keypair
+```
+
+### Parameters
+
+<ParamField path="existingPrivateJwk" type="string" optional>
+  An existing private JWK as JSON string. If provided, the keypair is derived from this key instead of generating a new one.
+</ParamField>
+
+<ParamField path="prefix" type="string" optional default="agent">
+  Prefix for the key (currently not used in key generation but reserved for future use)
+</ParamField>
+
+### Returns
+
+<ResponseField name="publicJwk" type="PublicJwk" required>
+  The public key in JWK format containing:
+  - `kty`: Always `"OKP"` (Octet Key Pair)
+  - `crv`: Always `"Ed25519"`
+  - `x`: Base64url-encoded public key
+  - `kid`: Key ID (thumbprint of the public key)
+</ResponseField>
+
+<ResponseField name="privateJwk" type="PrivateJwk" required>
+  The private key in JWK format containing all public key fields plus:
+  - `d`: Base64url-encoded private key material
+</ResponseField>
+
+### Example: Generate New Keypair
+
+```javascript
+const vestauth = require('vestauth')
+
+const kp = vestauth.primitives.keypair()
+
+console.log('Public key:', kp.publicJwk)
+// {
+//   kty: 'OKP',
+//   crv: 'Ed25519',
+//   x: 'QjutZ3_tt2jRD_XSOq4EFCDivnwEzKIrQB2yReddsNo',
+//   kid: 'ZCa5pijSUCw7QKgBs6nkvBBzbEjTMKYSt6iwCDQdIYc'
+// }
+
+console.log('Private key:', kp.privateJwk)
+// {
+//   kty: 'OKP',
+//   crv: 'Ed25519',
+//   d: 'RTyREuKAEfIMMs2ejwaKtFefZxt14HmsRR0rFj4U5iM',
+//   x: 'QjutZ3_tt2jRD_XSOq4EFCDivnwEzKIrQB2yReddsNo',
+//   kid: 'ZCa5pijSUCw7QKgBs6nkvBBzbEjTMKYSt6iwCDQdIYc'
+// }
+```
+
+### Example: Reuse Existing Private Key
+
+```javascript
+const existingPrivateJwk = JSON.stringify({
+  crv: 'Ed25519',
+  d: 'eScKeQcawvvRiBuA_-gWaAP7PZ3UUGPqJv7jks5tFVI',
+  x: 'MYf21IkWEi6dXOtzUdbll3SMCaFiSFi4KgqktFZinCE',
+  kty: 'OKP'
+})
+
+const kp = vestauth.primitives.keypair(existingPrivateJwk)
+
+// Returns the same keypair with computed kid
+console.log(kp.privateJwk.kid) // Computed thumbprint
+```
+
+<Info>
+  The `kid` (Key ID) is automatically computed as the JWK thumbprint of the public key, ensuring consistent identification across key usage.
+</Info>
+
+---
+
+## primitives.headers()
+
+Generates RFC 9421 HTTP Message Signature headers using explicit credentials.
+
+### Signature
+
+```typescript
+primitives.headers(
+  httpMethod: HttpMethod,
+  uri: string,
+  uid: string,
+  privateJwk: string,
+  tag?: string,
+  nonce?: string | null
+): Promise<SignatureHeaders>
+```
+
+### Parameters
+
+<ParamField path="httpMethod" type="string" required>
+  The HTTP method (e.g., `GET`, `POST`, `PUT`, `DELETE`)
+</ParamField>
+
+<ParamField path="uri" type="string" required>
+  The full request URI including scheme, host, and path
+</ParamField>
+
+<ParamField path="uid" type="string" required>
+  The agent UID (e.g., `agent-4b94ccd425e939fac5016b6b`)
+</ParamField>
+
+<ParamField path="privateJwk" type="string" required>
+  The private JWK as JSON string
+</ParamField>
+
+<ParamField path="tag" type="string" optional default="web-bot-auth">
+  Signature tag for the request
+</ParamField>
+
+<ParamField path="nonce" type="string" optional>
+  Custom nonce value. If not provided, a random nonce is generated.
+</ParamField>
+
+### Returns
+
+<ResponseField name="Signature" type="string" required>
+  The signature header value
+</ResponseField>
+
+<ResponseField name="Signature-Input" type="string" required>
+  The signature input parameters
+</ResponseField>
+
+<ResponseField name="Signature-Agent" type="string" required>
+  The agent discovery URL
+</ResponseField>
+
+### Example
+
+```javascript
+const vestauth = require('vestauth')
+
+// Generate keypair
+const kp = vestauth.primitives.keypair()
+
+// Create signature headers
+const headers = await vestauth.primitives.headers(
+  'POST',
+  'https://api.example.com/data',
+  'agent-abc123',
+  JSON.stringify(kp.privateJwk)
+)
+
+console.log(headers)
+// {
+//   Signature: 'sig1=:K7z3Nozcq1z5zfJhrd540DWYbjyQ1kR/S7ZDcMXE5gVhxe...==:',
+//   'Signature-Input': 'sig1=("@authority");created=1770263541;keyid="_4GFBGmXKinLBoh3-GJ...";alg="ed25519";expires=1770263841;nonce="0eu7hVMVFm61lQvIry...";tag="web-bot-auth"',
+//   'Signature-Agent': 'sig1="https://agent-abc123.api.vestauth.com"'
+// }
+```
+
+### Custom Tag and Nonce
+
+```javascript
+const headers = await vestauth.primitives.headers(
+  'GET',
+  'https://api.example.com/data',
+  'agent-xyz',
+  JSON.stringify(privateJwk),
+  'custom-tag',
+  'my-custom-nonce-value'
+)
+```
+
+<Warning>
+  The `uid` must match the agent identity registered with the Vestauth server, or verification will fail.
+</Warning>
+
+---
+
+## primitives.verify()
+
+Verifies a signed HTTP request using an explicit public key or by fetching the key from the agent's discovery endpoint.
+
+### Signature
+
+```typescript
+primitives.verify(
+  httpMethod: HttpMethod,
+  uri: string,
+  headers?: HeaderBag,
+  publicJwk?: PublicJwk
+): Promise<VerifyResult>
+```
+
+### Parameters
+
+<ParamField path="httpMethod" type="string" required>
+  The HTTP method of the request being verified
+</ParamField>
+
+<ParamField path="uri" type="string" required>
+  The full request URI that was signed
+</ParamField>
+
+<ParamField path="headers" type="HeaderBag" optional>
+  The request headers containing:
+  - `Signature`
+  - `Signature-Input`
+  - `Signature-Agent`
+</ParamField>
+
+<ParamField path="publicJwk" type="PublicJwk" optional>
+  The public key to verify against. If not provided, Vestauth will attempt to resolve it via the `Signature-Agent` discovery endpoint.
+</ParamField>
+
+### Returns
+
+<ResponseField name="uid" type="string">
+  The agent UID (if `Signature-Agent` was provided)
+</ResponseField>
+
+<ResponseField name="kid" type="string">
+  The key ID used for signing
+</ResponseField>
+
+<ResponseField name="public_jwk" type="PublicJwk">
+  The public key used for verification
+</ResponseField>
+
+<ResponseField name="well_known_url" type="string">
+  The discovery URL (if key was fetched remotely)
+</ResponseField>
+
+### Example: Verify with Explicit Public Key
+
+```javascript
+const vestauth = require('vestauth')
+
+// Generate keypair
+const kp = vestauth.primitives.keypair()
+
+// Create signed headers
+const headers = await vestauth.primitives.headers(
+  'GET',
+  'https://api.example.com/test',
+  'agent-test',
+  JSON.stringify(kp.privateJwk)
+)
+
+// Verify using the public key
+const result = await vestauth.primitives.verify(
+  'GET',
+  'https://api.example.com/test',
+  headers,
+  kp.publicJwk
+)
+
+console.log('Verification successful:', result)
+// {
+//   kid: 'ZCa5pijSUCw7QKgBs6nkvBBzbEjTMKYSt6iwCDQdIYc',
+//   public_jwk: { ... }
+// }
+```
+
+### Example: Verify with Discovery
+
+```javascript
+// Verify by fetching public key from Signature-Agent endpoint
+const result = await vestauth.primitives.verify(
+  'GET',
+  'https://api.example.com/test',
+  headers
+  // No publicJwk provided - will fetch from discovery
+)
+
+console.log('Agent UID:', result.uid)
+console.log('Discovered from:', result.well_known_url)
+```
+
+### Example: Server-Side Verification
+
+```javascript
+const express = require('express')
+const vestauth = require('vestauth')
+
+const app = express()
+
+app.post('/verify', async (req, res) => {
+  try {
+    const url = `${req.protocol}://${req.get('host')}${req.originalUrl}`
+    
+    // Verify without providing public key (uses discovery)
+    const result = await vestauth.primitives.verify(
+      req.method,
+      url,
+      req.headers
+    )
+    
+    res.json({
+      success: true,
+      agent: result.uid,
+      keyId: result.kid
+    })
+  } catch (err) {
+    res.status(401).json({
+      success: false,
+      error: err.message
+    })
+  }
+})
+```
+
+---
+
+## Differences from Higher-Level APIs
+
+### vs. Agent API
+
+| Feature | Agent API | Primitives API |
+|---------|-----------|----------------|
+| Reads from `.env` | ✅ Yes | ❌ No |
+| Requires explicit params | ❌ Optional | ✅ Required |
+| Writes to `.env` | ✅ Yes (`init`, `rotate`) | ❌ No |
+| Use case | Application code | Custom implementations |
+
+### vs. Tool API
+
+| Feature | Tool API | Primitives API |
+|---------|----------|----------------|
+| SSRF protection | ✅ Yes | ⚠️ Configurable |
+| Domain validation | ✅ Automatic | ❌ Manual |
+| Use case | Production tools | Testing, custom logic |
+
+---
+
+## Type Definitions
+
+```typescript
+type HttpMethod = 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE' | 'OPTIONS' | 'HEAD' | (string & {})
+
+type HeaderValue = string | string[]
+type HeaderBag = Record<string, HeaderValue | undefined>
+
+interface PublicJwk {
+  kty: 'OKP'
+  crv: 'Ed25519'
+  x: string
+  kid?: string
+  [prop: string]: unknown
+}
+
+interface PrivateJwk extends PublicJwk {
+  d: string
+}
+
+interface Keypair {
+  publicJwk: PublicJwk
+  privateJwk: PrivateJwk
+}
+
+interface SignatureHeaders {
+  Signature: string
+  'Signature-Input': string
+  'Signature-Agent': string
+}
+
+interface VerifyResult {
+  uid?: string
+  kid?: string
+  public_jwk?: PublicJwk
+  well_known_url?: string
+}
+```
+
+---
+
+## Testing and Development
+
+The Primitives API is ideal for testing authentication flows:
+
+```javascript
+const vestauth = require('vestauth')
+const assert = require('assert')
+
+// Test signature generation and verification
+async function testSignatureFlow() {
+  // 1. Generate test keypair
+  const kp = vestauth.primitives.keypair()
+  
+  // 2. Create signed headers
+  const headers = await vestauth.primitives.headers(
+    'GET',
+    'https://api.test.com/endpoint',
+    'agent-test-123',
+    JSON.stringify(kp.privateJwk)
+  )
+  
+  // 3. Verify the signature
+  const result = await vestauth.primitives.verify(
+    'GET',
+    'https://api.test.com/endpoint',
+    headers,
+    kp.publicJwk
+  )
+  
+  // 4. Assertions
+  assert.strictEqual(result.kid, kp.publicJwk.kid)
+  assert.deepStrictEqual(result.public_jwk, kp.publicJwk)
+  
+  console.log('✓ Signature test passed')
+}
+
+testSignatureFlow().catch(console.error)
+```
+
+---
+
+## Advanced: Custom Discovery
+
+You can implement custom key discovery logic using primitives:
+
+```javascript
+const vestauth = require('vestauth')
+
+// Custom key storage
+const keyStore = new Map()
+
+// Store agent's public key
+function registerAgent(uid, publicJwk) {
+  keyStore.set(uid, publicJwk)
+}
+
+// Verify with custom key lookup
+async function verifyWithCustomDiscovery(httpMethod, uri, headers) {
+  // Parse Signature-Agent to get UID
+  const signatureAgent = headers['Signature-Agent'] || headers['signature-agent']
+  const uidMatch = signatureAgent.match(/agent-[a-f0-9]+/)
+  const uid = uidMatch?.[0]
+  
+  // Look up public key from custom store
+  const publicJwk = keyStore.get(uid)
+  
+  if (!publicJwk) {
+    throw new Error('Agent not registered')
+  }
+  
+  // Verify with explicit public key
+  return vestauth.primitives.verify(httpMethod, uri, headers, publicJwk)
+}
+
+// Usage
+const kp = vestauth.primitives.keypair()
+registerAgent('agent-custom-123', kp.publicJwk)
+
+const headers = await vestauth.primitives.headers(
+  'GET',
+  'https://api.example.com/test',
+  'agent-custom-123',
+  JSON.stringify(kp.privateJwk)
+)
+
+const result = await verifyWithCustomDiscovery('GET', 'https://api.example.com/test', headers)
+console.log('Verified:', result.kid)
+```
+
+---
+
+## See Also
+
+- [Agent API](/library/agent-api) - High-level agent operations
+- [Tool API](/library/tool-api) - Production-ready verification
+- [Security Guide](/advanced/security) - Best practices and security considerations

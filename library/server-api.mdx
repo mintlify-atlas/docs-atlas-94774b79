@@ -1,0 +1,480 @@
+---
+title: 'Server API'
+description: 'Self-host Vestauth infrastructure programmatically'
+---
+
+## Overview
+
+The Server API provides methods for managing a self-hosted Vestauth server programmatically. This includes initializing server configuration, starting the server, and managing the PostgreSQL database.
+
+```javascript
+const vestauth = require('vestauth')
+
+// Initialize server configuration
+await vestauth.server.init()
+
+// Create and migrate database
+await vestauth.server.db.create()
+await vestauth.server.db.migrate()
+
+// Start server
+await vestauth.server.start()
+```
+
+<Info>
+  For most use cases, you'll use the CLI commands (`vestauth server start`) instead of the programmatic API. The Server API is useful for custom deployment scripts and testing.
+</Info>
+
+---
+
+## server.init()
+
+Initializes the server configuration by creating or updating the `.env` file with server settings.
+
+### Signature
+
+```typescript
+server.init(): Promise<void>
+```
+
+### Example
+
+```javascript
+const vestauth = require('vestauth')
+
+await vestauth.server.init()
+console.log('Server configuration initialized')
+```
+
+### Environment Variables Created
+
+This method creates a `.env` file with:
+
+```ini .env
+PORT="3000"
+HOSTNAME="http://localhost:3000"
+DATABASE_URL="postgres://localhost/vestauth_production"
+```
+
+<Tip>
+  Edit the `.env` file to customize your server configuration before starting.
+</Tip>
+
+---
+
+## server.start()
+
+Starts the Vestauth server using configuration from environment variables.
+
+### Signature
+
+```typescript
+server.start(
+  port?: number,
+  hostname?: string,
+  databaseUrl?: string
+): Promise<Server>
+```
+
+### Parameters
+
+<ParamField path="port" type="number" optional>
+  Port number to listen on. Overrides `PORT` environment variable. Defaults to `3000`.
+</ParamField>
+
+<ParamField path="hostname" type="string" optional>
+  Server hostname. Overrides `HOSTNAME` environment variable. Defaults to `http://localhost:3000`.
+</ParamField>
+
+<ParamField path="databaseUrl" type="string" optional>
+  PostgreSQL connection string. Overrides `DATABASE_URL` environment variable.
+</ParamField>
+
+### Returns
+
+Returns a Node.js HTTP server instance.
+
+### Example: Basic Usage
+
+```javascript
+const vestauth = require('vestauth')
+
+const server = await vestauth.server.start()
+console.log('Vestauth server started')
+```
+
+### Example: Custom Port and Hostname
+
+```javascript
+const server = await vestauth.server.start(
+  4567,
+  'https://vestauth.example.com'
+)
+```
+
+### Example: Full Custom Configuration
+
+```javascript
+const server = await vestauth.server.start(
+  8080,
+  'https://auth.myapp.com',
+  'postgresql://user:pass@db.example.com:5432/vestauth'
+)
+```
+
+---
+
+## server.close()
+
+Gracefully shuts down the Vestauth server.
+
+### Signature
+
+```typescript
+server.close(): Promise<void>
+```
+
+### Example
+
+```javascript
+const vestauth = require('vestauth')
+
+// Start server
+const server = await vestauth.server.start()
+
+// Later, shut down gracefully
+await vestauth.server.close()
+console.log('Server stopped')
+```
+
+---
+
+## server.db.create()
+
+Creates the `vestauth_production` PostgreSQL database.
+
+### Signature
+
+```typescript
+server.db.create(): Promise<void>
+```
+
+### Example
+
+```javascript
+const vestauth = require('vestauth')
+
+await vestauth.server.db.create()
+console.log('Database created')
+```
+
+<Warning>
+  This command requires PostgreSQL to be installed and running, and the user must have database creation privileges.
+</Warning>
+
+---
+
+## server.db.migrate()
+
+Runs database migrations to set up the required tables and schema.
+
+### Signature
+
+```typescript
+server.db.migrate(): Promise<void>
+```
+
+### Example
+
+```javascript
+const vestauth = require('vestauth')
+
+await vestauth.server.db.migrate()
+console.log('Database migrations completed')
+```
+
+### Migrations Applied
+
+This creates the following tables:
+
+- `agents` - Stores agent registrations
+- `public_jwks` - Stores agent public keys for discovery
+
+---
+
+## server.db.drop()
+
+Drops the `vestauth_production` database.
+
+### Signature
+
+```typescript
+server.db.drop(): Promise<void>
+```
+
+### Example
+
+```javascript
+const vestauth = require('vestauth')
+
+await vestauth.server.db.drop()
+console.log('Database dropped')
+```
+
+<Warning>
+  This operation is destructive and will delete all agent registrations and keys. Use with caution.
+</Warning>
+
+---
+
+## Complete Setup Example
+
+Here's a complete script for setting up and running a Vestauth server:
+
+```javascript
+const vestauth = require('vestauth')
+
+async function setupAndStartServer() {
+  try {
+    console.log('Initializing server configuration...')
+    await vestauth.server.init()
+    
+    console.log('Creating database...')
+    await vestauth.server.db.create()
+    
+    console.log('Running migrations...')
+    await vestauth.server.db.migrate()
+    
+    console.log('Starting server...')
+    const server = await vestauth.server.start(
+      3000,
+      'https://vestauth.example.com'
+    )
+    
+    console.log('Vestauth server is running on port 3000')
+    
+    // Handle shutdown
+    process.on('SIGTERM', async () => {
+      console.log('Shutting down...')
+      await vestauth.server.close()
+      process.exit(0)
+    })
+  } catch (error) {
+    console.error('Failed to start server:', error.message)
+    process.exit(1)
+  }
+}
+
+setupAndStartServer()
+```
+
+---
+
+## Production Deployment
+
+### Environment Configuration
+
+For production, set these environment variables:
+
+```bash .env
+PORT="443"
+HOSTNAME="https://vestauth.yourcompany.com"
+DATABASE_URL="postgresql://user:password@db.production.com:5432/vestauth_production"
+```
+
+### Managed Database
+
+Use a managed PostgreSQL service:
+
+```javascript
+const server = await vestauth.server.start(
+  443,
+  'https://vestauth.yourcompany.com',
+  'postgresql://user:pass@aws-1-us-east-1.pooler.supabase.com:5432/postgres'
+)
+```
+
+### Process Manager
+
+Run with a process manager like PM2:
+
+```javascript
+// server.js
+const vestauth = require('vestauth')
+
+(async () => {
+  await vestauth.server.start(
+    process.env.PORT || 3000,
+    process.env.HOSTNAME,
+    process.env.DATABASE_URL
+  )
+})()
+```
+
+```bash
+pm2 start server.js --name vestauth-server
+```
+
+### Docker Deployment
+
+```dockerfile
+FROM node:18-alpine
+
+WORKDIR /app
+
+COPY package*.json ./
+RUN npm ci --production
+
+COPY . .
+
+EXPOSE 3000
+
+CMD ["node", "server.js"]
+```
+
+```bash
+docker build -t vestauth-server .
+docker run -p 3000:3000 \
+  -e HOSTNAME=https://vestauth.example.com \
+  -e DATABASE_URL=postgresql://user:pass@db:5432/vestauth \
+  vestauth-server
+```
+
+---
+
+## DNS Configuration
+
+<Warning>
+  **Production requirement:** Configure a wildcard DNS record for `*.${HOSTNAME}`.
+  
+  Example: if `HOSTNAME=vestauth.yourapp.com`, add `*.vestauth.yourapp.com`.
+  
+  This is required for `.well-known` discovery per the web-bot-auth specification.
+</Warning>
+
+### Example DNS Records
+
+```
+vestauth.example.com        A      1.2.3.4
+*.vestauth.example.com      A      1.2.3.4
+```
+
+Or with CNAME:
+
+```
+vestauth.example.com        CNAME  lb.example.com
+*.vestauth.example.com      CNAME  lb.example.com
+```
+
+---
+
+## Health Checks
+
+Implement health checks for production:
+
+```javascript
+const http = require('http')
+
+function healthCheck() {
+  return new Promise((resolve, reject) => {
+    http.get('http://localhost:3000/.well-known/health', (res) => {
+      if (res.statusCode === 200) {
+        resolve(true)
+      } else {
+        reject(new Error(`Health check failed: ${res.statusCode}`))
+      }
+    }).on('error', reject)
+  })
+}
+
+// Check health every 30 seconds
+setInterval(async () => {
+  try {
+    await healthCheck()
+    console.log('Server is healthy')
+  } catch (error) {
+    console.error('Health check failed:', error.message)
+  }
+}, 30000)
+```
+
+---
+
+## Testing
+
+Test your server setup:
+
+```javascript
+const vestauth = require('vestauth')
+const assert = require('assert')
+
+async function testServer() {
+  // Start test server
+  const server = await vestauth.server.start(
+    3001,
+    'http://localhost:3001',
+    'postgres://localhost/vestauth_test'
+  )
+  
+  // Initialize test agent
+  const agent = await vestauth.agent.init('http://localhost:3001')
+  assert(agent.AGENT_UID, 'Agent UID should exist')
+  
+  // Test signed request
+  const headers = await vestauth.agent.headers(
+    'GET',
+    'http://localhost:3001/test'
+  )
+  assert(headers.Signature, 'Should have Signature header')
+  
+  // Cleanup
+  await vestauth.server.close()
+  await vestauth.server.db.drop()
+  
+  console.log('✓ All tests passed')
+}
+
+testServer().catch(console.error)
+```
+
+---
+
+## Monitoring and Logging
+
+The server logs key events:
+
+```javascript
+const vestauth = require('vestauth')
+
+// Server automatically logs:
+// - Agent registrations
+// - Key rotations
+// - Verification requests
+// - Errors
+
+await vestauth.server.start()
+
+// Example output:
+// [2026-03-03T00:00:00.000Z] Server listening on http://localhost:3000
+// [2026-03-03T00:01:00.000Z] Agent registered: agent-abc123
+// [2026-03-03T00:02:00.000Z] Key rotation: agent-abc123
+```
+
+---
+
+## See Also
+
+<CardGroup cols={2}>
+  <Card title="CLI Server Commands" icon="terminal" href="/cli/server-commands">
+    Command-line interface for server management
+  </Card>
+  <Card title="Self-Hosting Guide" icon="server" href="/self-hosting/overview">
+    Complete guide to self-hosting Vestauth
+  </Card>
+  <Card title="Configuration" icon="gear" href="/self-hosting/configuration">
+    Server configuration options
+  </Card>
+  <Card title="Database Setup" icon="database" href="/self-hosting/database">
+    PostgreSQL setup and migrations
+  </Card>
+</CardGroup>

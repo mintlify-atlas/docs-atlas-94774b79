@@ -1,0 +1,255 @@
+---
+title: primitives.headers()
+description: Generates RFC 9421 request signature headers using explicit credentials
+---
+
+## Overview
+
+The `primitives.headers()` function generates HTTP Signature headers (RFC 9421) for authenticating requests. Unlike `agent.headers()`, this is a low-level primitive that requires explicit credentials (no `.env` fallback).
+
+<Info>
+  For most use cases, use `agent.headers()` instead, which automatically reads credentials from `.env`. Use `primitives.headers()` when you need full control over credential management.
+</Info>
+
+## Signature
+
+```typescript
+primitives.headers(
+  httpMethod: HttpMethod,
+  uri: string,
+  uid: string,
+  privateJwk: string,
+  tag?: string,
+  nonce?: string | null
+): Promise<SignatureHeaders>
+```
+
+## Parameters
+
+<ParamField path="httpMethod" type="HttpMethod" required>
+  The HTTP method for the request being signed.
+  
+  Valid values: `'GET'`, `'POST'`, `'PUT'`, `'PATCH'`, `'DELETE'`, `'OPTIONS'`, `'HEAD'`, or any custom string.
+</ParamField>
+
+<ParamField path="uri" type="string" required>
+  The full URI of the request being signed (e.g., `https://api.example.com/users`).
+</ParamField>
+
+<ParamField path="uid" type="string" required>
+  The agent's unique identifier. This will be used in the `Signature-Agent` header.
+</ParamField>
+
+<ParamField path="privateJwk" type="string" required>
+  The agent's private JWK as a JSON string.
+  
+  ```typescript
+  {
+    kty: 'OKP',
+    crv: 'Ed25519',
+    x: string,
+    d: string,  // private component
+    kid?: string
+  }
+  ```
+</ParamField>
+
+<ParamField path="tag" type="string" default="web-bot-auth">
+  The signature tag to use in the `Signature-Input` header.
+</ParamField>
+
+<ParamField path="nonce" type="string | null" default="null">
+  An optional nonce value to include in the signature for additional security.
+</ParamField>
+
+## Return Value
+
+Returns a Promise that resolves to a `SignatureHeaders` object:
+
+<ResponseField name="Signature" type="string" required>
+  The RFC 9421 signature value in the format `sig1=:base64_signature:`.
+</ResponseField>
+
+<ResponseField name="Signature-Input" type="string" required>
+  The signature input parameters including `keyid`, `tag`, `created`, and optionally `nonce`.
+  
+  Example: `sig1=("@method" "@authority");keyid="...";tag="web-bot-auth";created=1234567890`
+</ResponseField>
+
+<ResponseField name="Signature-Agent" type="string" required>
+  The agent discovery URL in the format `sig1="https://uid.api.vestauth.com"`.
+</ResponseField>
+
+## Example
+
+```javascript
+import { primitives } from 'vestauth'
+
+// Your agent credentials
+const uid = 'abc123def456'
+const privateJwk = JSON.stringify({
+  kty: 'OKP',
+  crv: 'Ed25519',
+  x: 'MYf21IkWEi6dXOtzUdbll3SMCaFiSFi4KgqktFZinCE',
+  d: 'eScKeQcawvvRiBuA_-gWaAP7PZ3UUGPqJv7jks5tFVI',
+  kid: 'rBE7_zLOVYk4oYEdI-01qpXHWNMyZYD-4LEf6HiyZ9Q'
+})
+
+// Generate signature headers
+const headers = await primitives.headers(
+  'POST',
+  'https://api.example.com/users',
+  uid,
+  privateJwk
+)
+
+// Make the authenticated request
+const response = await fetch('https://api.example.com/users', {
+  method: 'POST',
+  headers: {
+    ...headers,
+    'Content-Type': 'application/json'
+  },
+  body: JSON.stringify({ name: 'John Doe' })
+})
+```
+
+## Example Output
+
+```javascript
+{
+  'Signature': 'sig1=:K2qGT5srn2OGbOIDzQ6kYT+ruaycnDAAUpKv+ePFfD0=:',
+  'Signature-Input': 'sig1=("@method" "@authority");keyid="rBE7_zLOVYk4oYEdI-01qpXHWNMyZYD-4LEf6HiyZ9Q";tag="web-bot-auth";created=1709481600',
+  'Signature-Agent': 'sig1="https://abc123.api.vestauth.com"'
+}
+```
+
+## Example with Nonce
+
+```javascript
+import { primitives } from 'vestauth'
+import crypto from 'crypto'
+
+// Generate a random nonce for replay protection
+const nonce = crypto.randomBytes(16).toString('hex')
+
+const headers = await primitives.headers(
+  'POST',
+  'https://api.example.com/secure',
+  uid,
+  privateJwk,
+  'web-bot-auth',
+  nonce
+)
+
+console.log('Nonce:', nonce)
+console.log('Headers:', headers)
+```
+
+## Example with Custom Tag
+
+```javascript
+import { primitives } from 'vestauth'
+
+// Use a custom signature tag
+const headers = await primitives.headers(
+  'GET',
+  'https://api.example.com/data',
+  uid,
+  privateJwk,
+  'my-custom-tag'
+)
+
+// The Signature-Input will include: tag="my-custom-tag"
+```
+
+## Complete Workflow
+
+```javascript
+import { primitives } from 'vestauth'
+
+// 1. Generate a keypair
+const keypair = primitives.keypair()
+const uid = 'my-agent-uid' // You'd get this from registration
+
+// 2. Store the private key securely
+const privateJwkString = JSON.stringify(keypair.privateJwk)
+// ... save to secure storage ...
+
+// 3. Later, use the stored credentials to sign requests
+const headers = await primitives.headers(
+  'POST',
+  'https://api.example.com/action',
+  uid,
+  privateJwkString
+)
+
+// 4. Make authenticated request
+const response = await fetch('https://api.example.com/action', {
+  method: 'POST',
+  headers
+})
+
+console.log('Response:', await response.json())
+```
+
+## Error Handling
+
+```javascript
+import { primitives } from 'vestauth'
+
+try {
+  const headers = await primitives.headers(
+    'POST',
+    'https://api.example.com/data',
+    uid,
+    privateJwk
+  )
+  // Use headers...
+} catch (error) {
+  if (error.message.includes('missing uid')) {
+    console.error('UID is required')
+  } else if (error.message.includes('missing privateJwk')) {
+    console.error('Private JWK is required')
+  } else if (error.message.includes('invalid privateJwk')) {
+    console.error('Private JWK is not valid JSON or malformed')
+  } else {
+    console.error('Failed to generate headers:', error.message)
+  }
+}
+```
+
+## Common Errors
+
+- **Missing UID**: Thrown when `uid` is not provided or is empty
+- **Missing Private JWK**: Thrown when `privateJwk` is not provided or is empty
+- **Invalid Private JWK**: Thrown when `privateJwk` is not valid JSON or doesn't contain required fields
+
+## Signature Components
+
+The generated signature covers these HTTP message components:
+
+- `@method` - The HTTP method (GET, POST, etc.)
+- `@authority` - The authority component of the URI (host + optional port)
+
+These components are extracted from the `httpMethod` and `uri` parameters and included in the signature base string according to RFC 9421.
+
+## Custom Discovery Hostname
+
+By default, the `Signature-Agent` header uses `api.vestauth.com` as the discovery hostname. You can customize this with the `AGENT_HOSTNAME` environment variable:
+
+```bash
+# .env
+AGENT_HOSTNAME=custom.vestauth.com
+```
+
+```javascript
+// The Signature-Agent will be: sig1="https://uid.custom.vestauth.com"
+const headers = await primitives.headers('GET', uri, uid, privateJwk)
+```
+
+## Related Methods
+
+- [agent.headers()](/api/agent/headers) - Higher-level version that reads from `.env`
+- [primitives.keypair()](/api/primitives/keypair) - Generate a keypair for signing
+- [primitives.verify()](/api/primitives/verify) - Verify signed requests

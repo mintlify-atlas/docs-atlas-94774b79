@@ -1,0 +1,304 @@
+---
+title: 'Building Tools'
+description: 'Learn how to build tools that accept Vestauth authentication'
+icon: 'wrench'
+---
+
+## Overview
+
+Vestauth makes it easy to build tools that authenticate agents using cryptographic signatures. With a single line of code, you can verify an agent's identity and securely access their unique identifier.
+
+## Quick Start
+
+Add Vestauth authentication to any HTTP endpoint using `vestauth.tool.verify()`:
+
+```js
+const vestauth = require('vestauth')
+const express = require('express')
+const app = express()
+
+app.post('/whoami', async (req, res) => {
+  try {
+    const url = `${req.protocol}://${req.get('host')}${req.originalUrl}`
+    const agent = await vestauth.tool.verify(req.method, url, req.headers)
+
+    res.json(agent)
+  } catch (err) {
+    res.status(401).json({ code: 401, error: { message: err.message }})
+  }
+})
+
+app.listen(3000)
+```
+
+## How It Works
+
+<Steps>
+  <Step title="Agent sends signed request">
+    The agent signs each HTTP request with its private key using `vestauth agent curl`:
+    
+    ```sh
+    vestauth agent curl https://your-tool.com/endpoint
+    ```
+    
+    This automatically adds three signature headers to the request:
+    - `Signature` - The cryptographic signature
+    - `Signature-Input` - Signature parameters (created, expires, nonce, keyid)
+    - `Signature-Agent` - The agent's unique identifier and discovery endpoint
+  </Step>
+
+  <Step title="Tool receives request">
+    Your tool receives the HTTP request with signed headers.
+  </Step>
+
+  <Step title="Tool verifies signature">
+    `vestauth.tool.verify()` performs several checks:
+    
+    1. Validates that required headers are present
+    2. Checks signature hasn't expired
+    3. Extracts agent identity from `Signature-Agent` header
+    4. Fetches agent's public key from `.well-known` discovery endpoint
+    5. Verifies cryptographic signature matches the request
+  </Step>
+
+  <Step title="Tool receives agent identity">
+    On success, `verify()` returns the agent's identity:
+    
+    ```json
+    {
+      "uid": "agent-4b94ccd425e939fac5016b6b",
+      "kid": "B0u80Gw28W9U2Jl5t_EBiWeBajO2104kOYZ9Ikucl5I",
+      "public_jwk": { ... },
+      "well_known_url": "https://agent-4b94ccd425e939fac5016b6b.api.vestauth.com/.well-known/http-message-signatures-directory"
+    }
+    ```
+  </Step>
+</Steps>
+
+## Verification Logic
+
+The `tool.verify()` function is implemented in `/src/lib/helpers/toolVerify.js`:
+
+```js
+async function toolVerify (httpMethod, uri, headers = {}, serverHostname = null) {
+  // 1. Validate required parameters
+  if (!httpMethod) throw new Errors().missingHttpMethod()
+  if (!uri) throw new Errors().missingUri()
+
+  // 2. Extract and validate Signature-Agent header
+  const signatureAgent = headers['Signature-Agent'] || headers['signature-agent']
+  if (!signatureAgent) throw new Errors().missingSignatureAgent()
+
+  const { value } = parseSignatureAgentHeader(signatureAgent)
+  const { host } = extractHostAndHostname(value)
+  const fqdn = host
+
+  // 3. Verify agent is from trusted domain (SSRF protection)
+  if (!trustedFqdn(fqdn, serverHostname)) {
+    throw new Errors().untrustedSignatureAgent()
+  }
+
+  // 4. Verify cryptographic signature
+  return verify(httpMethod, uri, headers)
+}
+```
+
+## Response Format
+
+### Success Response
+
+When verification succeeds, return the agent object:
+
+```js
+res.json(agent)
+```
+
+**Example:**
+```json
+{
+  "uid": "agent-609a4fd2ebf4e6347108c517",
+  "kid": "FGzgs758DBGnI1S0BejChDsK0IKZm3qPpOOXdRnnBkM",
+  "public_jwk": {
+    "crv": "Ed25519",
+    "x": "py2xNaAfjKZiau-jtmJls6h_3n8xJ1Ur0ie-n9b8zWg",
+    "kty": "OKP",
+    "kid": "B0u80Gw28W9U2Jl5t_EBiWeBajO2104kOYZ9Ikucl5I"
+  },
+  "well_known_url": "https://agent-609a4fd2ebf4e6347108c517.api.vestauth.com/.well-known/http-message-signatures-directory"
+}
+```
+
+### Error Response
+
+When verification fails, return a 401 error:
+
+```js
+res.status(401).json({ 
+  code: 401, 
+  error: { message: err.message }
+})
+```
+
+**Common error messages:**
+- `Missing Signature-Agent header`
+- `Invalid Signature-Agent`
+- `Untrusted Signature-Agent`
+- `Expired signature`
+- `Invalid signature`
+
+## Using Agent Identity
+
+Once verified, use the agent's `uid` to:
+
+- **Track usage** - Store requests per agent for rate limiting
+- **Personalize responses** - Return agent-specific data
+- **Access control** - Grant/deny permissions based on agent identity
+- **Audit logs** - Record which agent performed each action
+
+**Example:**
+```js
+app.post('/files/write', async (req, res) => {
+  const agent = await vestauth.tool.verify(req.method, url, req.headers)
+  
+  // Use agent.uid for file namespacing
+  const filepath = `/${agent.uid}${req.body.filepath}`
+  await fs.writeFile(filepath, req.body.content)
+  
+  res.json({ success: true })
+})
+```
+
+## Framework Examples
+
+<Accordion title="Express.js">
+  ```js
+  const express = require('express')
+  const vestauth = require('vestauth')
+  const app = express()
+
+  app.use(express.json())
+
+  app.post('/api/*', async (req, res) => {
+    try {
+      const url = `${req.protocol}://${req.get('host')}${req.originalUrl}`
+      const agent = await vestauth.tool.verify(req.method, url, req.headers)
+      
+      // Agent verified - attach to request
+      req.agent = agent
+      next()
+    } catch (err) {
+      res.status(401).json({ error: err.message })
+    }
+  })
+
+  app.listen(3000)
+  ```
+</Accordion>
+
+<Accordion title="Fastify">
+  ```js
+  const fastify = require('fastify')()
+  const vestauth = require('vestauth')
+
+  fastify.post('/endpoint', async (request, reply) => {
+    try {
+      const url = `${request.protocol}://${request.hostname}${request.url}`
+      const agent = await vestauth.tool.verify(
+        request.method,
+        url,
+        request.headers
+      )
+      
+      return { agent }
+    } catch (err) {
+      reply.code(401).send({ error: err.message })
+    }
+  })
+
+  fastify.listen({ port: 3000 })
+  ```
+</Accordion>
+
+<Accordion title="Next.js API Route">
+  ```js
+  import vestauth from 'vestauth'
+
+  export default async function handler(req, res) {
+    try {
+      const url = `${req.headers['x-forwarded-proto'] || 'https'}://${req.headers.host}${req.url}`
+      const agent = await vestauth.tool.verify(req.method, url, req.headers)
+      
+      res.status(200).json({ agent })
+    } catch (err) {
+      res.status(401).json({ error: err.message })
+    }
+  }
+  ```
+</Accordion>
+
+## Best Practices
+
+<Warning>
+  **Always use HTTPS in production**
+  
+  Vestauth signatures protect request integrity, but you should still use HTTPS to prevent eavesdropping on request/response content.
+</Warning>
+
+<Note>
+  **Cache public keys**
+  
+  The verification process fetches the agent's public key from their `.well-known` endpoint. Consider caching these keys to improve performance and reduce network calls.
+</Note>
+
+### Error Handling
+
+Always wrap `verify()` in a try-catch block:
+
+```js
+try {
+  const agent = await vestauth.tool.verify(req.method, url, req.headers)
+  // Process authenticated request
+} catch (err) {
+  // Return 401 for all verification failures
+  res.status(401).json({ error: err.message })
+}
+```
+
+### URL Construction
+
+Ensure the URL passed to `verify()` exactly matches what the agent signed:
+
+```js
+// Correct - includes protocol, host, and full path
+const url = `${req.protocol}://${req.get('host')}${req.originalUrl}`
+
+// Incorrect - missing protocol or host
+const url = req.originalUrl // ❌
+```
+
+## Testing Your Tool
+
+Test your tool using the Vestauth CLI:
+
+```sh
+# Test GET endpoint
+vestauth agent curl https://your-tool.com/whoami --pp
+
+# Test POST endpoint with data
+vestauth agent curl https://your-tool.com/endpoint \
+  -d '{"key":"value"}' --pp
+
+# Debug: View signed headers
+vestauth agent headers POST https://your-tool.com/endpoint --pp
+```
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Key Rotation" icon="rotate" href="/advanced/key-rotation">
+    Learn how to handle agent key rotation
+  </Card>
+  <Card title="Security Model" icon="shield" href="/advanced/security">
+    Understand Vestauth's security architecture
+  </Card>
+</CardGroup>

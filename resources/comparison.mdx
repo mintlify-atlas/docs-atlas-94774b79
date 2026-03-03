@@ -1,0 +1,75 @@
+---
+title: Vestauth vs Other Authentication Methods
+description: Compare Vestauth with API keys, OAuth, and cookies for agent authentication
+---
+
+## Authentication Method Comparison
+
+Compare Vestauth against traditional authentication methods for agents and automated systems.
+
+### Agent + Tool Matrix
+
+| Capability | Vestauth | API Keys | OAuth | Cookies |
+|---|---|---|---|---|
+| **Agent: no browser required** | ✅ | ✅ | ⚠️ (depends on flow) | ❌ |
+| **Agent: easy to automate** | ✅ | ✅ | ⚠️ | ❌ |
+| **Agent: no shared secret** | ✅ | ❌ | ⚠️ (bearer tokens) | ❌ |
+| **Agent: per‑request identity proof** | ✅ | ❌ | ⚠️ (token‑based) | ❌ |
+| **Agent: easy key/token rotation** | ✅ | ⚠️ | ⚠️ | ⚠️ |
+| **Tool: no secret storage** | ✅ (public keys only) | ❌ | ❌ | ❌ |
+| **Tool: strong attribution to agent** | ✅ | ⚠️ | ⚠️ | ❌ |
+| **Tool: stateless verification** | ✅ | ✅ | ✅ | ❌ |
+| **Tool: simple to implement** | ⚠️ (sig verification) | ✅ | ❌ | ✅ |
+| **Tool: revocation control** | ✅ | ⚠️ | ✅ | ⚠️ |
+
+**Legend:** ✅ strong fit, ⚠️ partial/conditional, ❌ poor fit
+
+## How Vestauth Works
+
+<Steps>
+  <Step title="Agent generates keypair">
+    An agent generates a public/private keypair using Ed25519 cryptography.
+  </Step>
+  
+  <Step title="Agent signs requests">
+    The agent signs each HTTP request with its private key following RFC 9421.
+  </Step>
+  
+  <Step title="Tool verifies signature">
+    The tool verifies the signature using the agent's public key retrieved from a .well-known endpoint.
+  </Step>
+  
+  <Step title="Attributable authentication">
+    Requests are attributable, auditable, and do not require shared secrets or browser sessions.
+  </Step>
+</Steps>
+
+## Key Advantages
+
+<CardGroup cols={2}>
+  <Card title="No Shared Secrets" icon="key">
+    Private keys never leave the agent. Only public keys are shared for verification.
+  </Card>
+  
+  <Card title="Easy Rotation" icon="rotate">
+    Rotate keys without service disruption using .well-known discovery.
+  </Card>
+  
+  <Card title="Strong Attribution" icon="fingerprint">
+    Each request is cryptographically signed and tied to a specific agent identity.
+  </Card>
+  
+  <Card title="Stateless Verification" icon="check">
+    Tools verify signatures without session state or shared databases.
+  </Card>
+</CardGroup>
+
+## When to Use Vestauth
+
+<Tip>
+Vestauth is ideal for automated systems, AI agents, CLIs, bots, and any scenario where you need strong identity without shared secrets.
+</Tip>
+
+<Warning>
+For human-facing web applications with browser sessions, traditional cookie-based authentication may be simpler.
+</Warning>

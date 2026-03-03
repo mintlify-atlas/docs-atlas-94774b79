@@ -1,0 +1,355 @@
+---
+title: 'Database Setup'
+description: 'PostgreSQL database setup, schema, and migration details for Vestauth'
+---
+
+## Database Requirements
+
+Vestauth requires PostgreSQL 12 or higher for storing agent identities and public keys.
+
+### Supported Databases
+
+- **Local PostgreSQL** - For development and testing
+- **Managed PostgreSQL** - Production-ready options:
+  - Supabase
+  - AWS RDS
+  - Google Cloud SQL
+  - Azure Database for PostgreSQL
+  - DigitalOcean Managed Databases
+  - Heroku Postgres
+
+## Database Schema
+
+Vestauth uses two main tables to store agent data:
+
+### agents Table
+
+Stores agent identity information.
+
+| Column | Type | Description |
+|--------|------|-------------|
+| `id` | bigint | Primary key (auto-increment) |
+| `uid` | string | Unique agent identifier (e.g., `agent-4b94ccd425e939fac5016b6b`) |
+| `created_at` | datetime | Timestamp when agent was created |
+| `updated_at` | datetime | Timestamp when agent was last updated |
+
+**Indexes:**
+- Unique index on `uid` (`index_agents_on_uid`)
+
+### public_jwks Table
+
+Stores agent public keys (JSON Web Keys).
+
+| Column | Type | Description |
+|--------|------|-------------|
+| `id` | bigint | Primary key (auto-increment) |
+| `agent_id` | bigint | Foreign key to `agents.id` |
+| `kid` | string | Key ID from JWK |
+| `value` | jsonb | Full JWK object |
+| `state` | string | Key state: `active` or `inactive` |
+| `created_at` | datetime | Timestamp when key was created |
+| `updated_at` | datetime | Timestamp when key was last updated |
+
+**Indexes:**
+- Index on `agent_id` (`index_public_jwks_on_agent_id`)
+- Unique index on `kid` (`index_public_jwks_on_kid`)
+
+**Foreign Keys:**
+- `agent_id` references `agents.id`
+
+## Database Commands
+
+### Create Database
+
+Create the `vestauth_production` database:
+
+```bash
+vestauth server db:create
+```
+
+This command:
+1. Connects to PostgreSQL's maintenance database (`postgres`)
+2. Checks if `vestauth_production` exists
+3. Creates the database if it doesn't exist
+
+<Note>
+The database name is extracted from the `DATABASE_URL` environment variable.
+
+For example, `postgres://localhost/vestauth_production` creates a database named `vestauth_production`.
+</Note>
+
+### Run Migrations
+
+Apply database schema migrations:
+
+```bash
+vestauth server db:migrate
+```
+
+Output:
+```
+== 20260223204000 CreateAgentsTable: migrating ================================================
+== 20260223204000 CreateAgentsTable: migrated (0.0160s) ===========================
+== 20260223205500 CreatePublicJwksTable: migrating ================================================
+== 20260223205500 CreatePublicJwksTable: migrated (0.0100s) ===========================
+```
+
+Migrations are run sequentially and tracked in the `knex_migrations` table.
+
+### Drop Database
+
+<Warning>
+**Destructive operation**: This permanently deletes all agent data.
+</Warning>
+
+```bash
+vestauth server db:drop
+```
+
+Use this only for development or when completely resetting your server.
+
+## Database Connection
+
+### Connection URL Format
+
+Vestauth uses standard PostgreSQL connection URLs:
+
+```
+postgresql://[user[:password]@][host][:port][/dbname][?param1=value1&...]
+```
+
+### Local PostgreSQL
+
+For local development:
+
+```ini .env
+DATABASE_URL="postgres://localhost/vestauth_production"
+```
+
+This connects to:
+- Host: `localhost`
+- Port: `5432` (default)
+- Database: `vestauth_production`
+- User: Current OS user
+- No password (peer authentication)
+
+### Managed PostgreSQL
+
+For production with Supabase:
+
+```ini .env
+DATABASE_URL="postgresql://postgres.xxxxxxxxxxxxxxxxxxxx:PASSWORD@aws-1-us-east-1.pooler.supabase.com:5432/postgres"
+```
+
+For AWS RDS:
+
+```ini .env
+DATABASE_URL="postgresql://username:password@mydb.xxxxxxxxxxxx.us-east-1.rds.amazonaws.com:5432/vestauth_production"
+```
+
+### Connection with SSL
+
+Vestauth automatically configures SSL for database connections:
+
+```javascript
+const db = knex({
+  client: 'pg',
+  connection: databaseUrl,
+  ssl: { rejectUnauthorized: false }
+})
+```
+
+For strict SSL verification, you can modify the server code to provide CA certificates.
+
+## Migrations
+
+Vestauth uses [Knex.js](https://knexjs.org/) for database migrations.
+
+### Migration Files
+
+Migrations are located in `src/server/db/migration/`:
+
+```
+20260223204000_create_agents_table.js
+20260223205500_create_public_jwks_table.js
+```
+
+### Migration Structure
+
+Each migration file exports `up` and `down` functions:
+
+```javascript 20260223204000_create_agents_table.js
+exports.up = async function (knex) {
+  await knex.schema.createTable('agents', function (table) {
+    table.bigIncrements('id').primary()
+    table.string('uid')
+    table.datetime('created_at').notNullable()
+    table.datetime('updated_at').notNullable()
+    table.unique(['uid'], { indexName: 'index_agents_on_uid' })
+  })
+}
+
+exports.down = async function (knex) {
+  await knex.schema.dropTableIfExists('agents')
+}
+```
+
+### Migration Tracking
+
+Knex creates a `knex_migrations` table to track which migrations have been applied:
+
+```sql
+SELECT * FROM knex_migrations;
+```
+
+Output:
+```
+id | name                                    | batch | migration_time
+---+-----------------------------------------+-------+----------------
+1  | 20260223204000_create_agents_table.js   | 1     | 2026-03-03 ...
+2  | 20260223205500_create_public_jwks_table.js | 1  | 2026-03-03 ...
+```
+
+## Database Administration
+
+### Direct Database Access
+
+Connect to your database using `psql`:
+
+```bash Local PostgreSQL
+psql vestauth_production
+```
+
+```bash Managed PostgreSQL
+psql "postgresql://USER:PASS@host:5432/postgres"
+```
+
+### Query Agent Data
+
+View all agents:
+
+```sql
+SELECT * FROM agents;
+```
+
+View agent public keys:
+
+```sql
+SELECT a.uid, p.kid, p.state, p.value
+FROM agents a
+JOIN public_jwks p ON p.agent_id = a.id;
+```
+
+Find a specific agent:
+
+```sql
+SELECT * FROM agents WHERE uid = 'agent-4b94ccd425e939fac5016b6b';
+```
+
+### Backup and Restore
+
+Backup your database:
+
+```bash
+pg_dump vestauth_production > vestauth_backup.sql
+```
+
+Restore from backup:
+
+```bash
+psql vestauth_production < vestauth_backup.sql
+```
+
+## Troubleshooting
+
+### Connection Issues
+
+If you see `missing DATABASE_URL` error:
+
+1. Verify `.env` file exists and contains `DATABASE_URL`
+2. Check the URL format is correct
+3. Ensure PostgreSQL is running: `pg_isready`
+
+If you see `invalid DATABASE_URL` error:
+
+- Check for typos in the connection string
+- Verify the URL follows the format: `postgresql://user:pass@host:port/db`
+
+### Migration Errors
+
+If migrations fail:
+
+```bash
+# Check database exists
+psql -l | grep vestauth_production
+
+# Try creating it manually
+creatdb vestauth_production
+
+# Then run migrations again
+vestauth server db:migrate
+```
+
+### Permission Errors
+
+If you see permission denied errors:
+
+1. Ensure your PostgreSQL user has sufficient privileges
+2. Grant necessary permissions:
+   ```sql
+   GRANT ALL PRIVILEGES ON DATABASE vestauth_production TO your_user;
+   ```
+
+### SSL Connection Issues
+
+For managed databases requiring strict SSL:
+
+Modify `src/lib/helpers/dbMigrate.js` to include CA certificate:
+
+```javascript
+const db = knex({
+  client: 'pg',
+  connection: {
+    connectionString: databaseUrl,
+    ssl: {
+      rejectUnauthorized: true,
+      ca: fs.readFileSync('/path/to/ca-certificate.crt').toString()
+    }
+  }
+})
+```
+
+## Production Recommendations
+
+<Steps>
+  <Step title="Use Connection Pooling">
+    Most managed PostgreSQL services provide connection pooling (e.g., Supabase Pooler, PgBouncer).
+    
+    Use the pooled connection URL:
+    ```ini
+    DATABASE_URL="postgresql://USER:PASS@aws-1-us-east-1.pooler.supabase.com:5432/postgres"
+    ```
+  </Step>
+
+  <Step title="Enable Automated Backups">
+    Configure daily automated backups in your PostgreSQL provider:
+    - Supabase: Automatic daily backups
+    - AWS RDS: Configure automated snapshots
+    - DigitalOcean: Enable daily backups
+  </Step>
+
+  <Step title="Monitor Database Performance">
+    Set up monitoring for:
+    - Connection count
+    - Query performance
+    - Storage usage
+    - Replication lag (if applicable)
+  </Step>
+
+  <Step title="Configure Resource Limits">
+    Set appropriate resource limits based on expected load:
+    - Connection pool size
+    - Memory allocation
+    - CPU allocation
+  </Step>
+</Steps>

@@ -1,0 +1,331 @@
+---
+title: 'Key Rotation'
+description: 'Learn how to rotate agent keys safely without downtime'
+icon: 'rotate'
+---
+
+## Overview
+
+Key rotation is the process of replacing an agent's cryptographic keypair with a new one. Vestauth makes rotation simple and secure, allowing you to update keys without changing your agent's identity (`AGENT_UID`).
+
+## Why Rotate Keys?
+
+Regular key rotation is a security best practice:
+
+- **Limit exposure window** - If a private key is compromised, rotation limits how long it remains valid
+- **Compliance requirements** - Many security policies require periodic key rotation
+- **Key lifecycle management** - Replace keys that may have been exposed to insecure environments
+- **Proactive security** - Reduce risk before a compromise occurs
+
+<Note>
+  **Your agent identity remains constant**
+  
+  Rotating keys updates `AGENT_PUBLIC_JWK` and `AGENT_PRIVATE_JWK`, but your `AGENT_UID` stays the same. Tools can continue to identify your agent across rotations.
+</Note>
+
+## How to Rotate Keys
+
+### Using the CLI
+
+Rotate keys with a single command:
+
+```sh
+vestauth agent rotate
+```
+
+**Output:**
+```sh
+✔ agent keys rotated (.env/AGENT_UID=agent-8f1b347e2e58899f3147c05b)
+⮕ next run: [vestauth agent curl https://api.vestauth.com/whoami]
+```
+
+<Steps>
+  <Step title="Generate new keypair">
+    Vestauth generates a new Ed25519 keypair locally:
+    
+    ```js
+    const newKp = keypair()
+    // Returns: { publicJwk, privateJwk }
+    ```
+  </Step>
+
+  <Step title="Register new public key">
+    The new public key is sent to the Vestauth server:
+    
+    ```js
+    await new PostRotate(rotateUrl, newKp.publicJwk, uid, privateJwk).run()
+    ```
+    
+    This request is signed with your **current** private key to prove you own the agent.
+  </Step>
+
+  <Step title="Update .env file">
+    The new keys are saved to your `.env` file:
+    
+    ```ini
+    AGENT_UID="agent-8f1b347e2e58899f3147c05b"
+    AGENT_PUBLIC_JWK="{\"crv\":\"Ed25519\",\"x\":\"new_key_here\",\"kty\":\"OKP\",\"kid\":\"new_kid_here\"}"
+    AGENT_PRIVATE_JWK="{\"crv\":\"Ed25519\",\"d\":\"new_private_key\",\"x\":\"new_key_here\",\"kty\":\"OKP\",\"kid\":\"new_kid_here\"}"
+    ```
+  </Step>
+
+  <Step title="Verify rotation">
+    Test that rotation succeeded:
+    
+    ```sh
+    vestauth agent curl https://api.vestauth.com/whoami --pp
+    ```
+  </Step>
+</Steps>
+
+## Custom Hostname
+
+Rotate keys on a self-hosted Vestauth server:
+
+```sh
+vestauth agent rotate --hostname https://vestauth.yoursite.com
+```
+
+## Rotation Implementation
+
+The rotation logic is implemented in `/src/lib/helpers/agentRotate.js`:
+
+```js
+async function agentRotate (uid, privateJwk, tag = 'web-bot-auth', nonce = null, hostname = null) {
+  const envPath = '.env'
+  const rotateUrl = normalizeAgentHostname(hostname)
+
+  // 1. Generate new keypair
+  const newKp = keypair()
+
+  // 2. Register new public key (signed with current private key)
+  const agent = await new PostRotate(rotateUrl, newKp.publicJwk, uid, privateJwk).run()
+
+  // 3. Update .env file
+  dotenvx.set('AGENT_PUBLIC_JWK', JSON.stringify(newKp.publicJwk), { 
+    path: envPath, plain: true, quiet: true 
+  })
+  dotenvx.set('AGENT_PRIVATE_JWK', JSON.stringify(newKp.privateJwk), { 
+    path: envPath, plain: true, quiet: true 
+  })
+
+  return {
+    AGENT_PUBLIC_JWK: newKp.publicJwk,
+    AGENT_UID: agent.uid,
+    path: envPath
+  }
+}
+```
+
+## Programmatic Rotation
+
+Rotate keys from code:
+
+```js
+const vestauth = require('vestauth')
+
+const uid = process.env.AGENT_UID
+const privateJwk = JSON.parse(process.env.AGENT_PRIVATE_JWK)
+
+const result = await vestauth.agent.rotate(
+  uid,
+  privateJwk,
+  'web-bot-auth',  // tag
+  null,            // nonce (optional)
+  null             // hostname (optional)
+)
+
+console.log(`Rotated: ${result.AGENT_UID}`)
+```
+
+## Zero-Downtime Rotation
+
+Vestauth servers support multi-key discovery, allowing tools to accept both old and new keys during rotation:
+
+<Steps>
+  <Step title="Agent rotates keys">
+    Run `vestauth agent rotate`
+  </Step>
+
+  <Step title="Server publishes both keys">
+    The `.well-known` endpoint temporarily returns both the old and new public keys:
+    
+    ```json
+    {
+      "keys": [
+        { "kid": "new_kid", "crv": "Ed25519", ... },
+        { "kid": "old_kid", "crv": "Ed25519", ... }
+      ]
+    }
+    ```
+  </Step>
+
+  <Step title="Tools accept either key">
+    During the transition period, tools can verify signatures from either key based on the `keyid` in the `Signature-Input` header.
+  </Step>
+
+  <Step title="Old key expires">
+    After a grace period, the old key is removed from the discovery endpoint.
+  </Step>
+</Steps>
+
+<Note>
+  **Grace period**
+  
+  The exact duration depends on your server configuration, but typically allows 24-48 hours for in-flight requests to complete.
+</Note>
+
+## Rotation Best Practices
+
+### Regular Schedule
+
+Establish a rotation schedule based on your security requirements:
+
+```sh
+# Rotate every 90 days
+0 0 1 */3 * cd /path/to/agent && vestauth agent rotate
+```
+
+### Before Exposure
+
+Rotate immediately if:
+
+- A developer leaves your team
+- You suspect key compromise
+- Your `.env` file was committed to version control
+- Keys were shared in plaintext (email, Slack, etc.)
+
+### After Exposure
+
+If keys are compromised:
+
+<Steps>
+  <Step title="Rotate immediately">
+    ```sh
+    vestauth agent rotate
+    ```
+  </Step>
+
+  <Step title="Verify rotation succeeded">
+    ```sh
+    vestauth agent curl https://api.vestauth.com/whoami
+    ```
+  </Step>
+
+  <Step title="Monitor for unauthorized usage">
+    Check tool audit logs for requests signed with the old key after rotation.
+  </Step>
+
+  <Step title="Revoke old key (if server supports it)">
+    Contact your Vestauth server administrator to immediately revoke the compromised key.
+  </Step>
+</Steps>
+
+### Backup Keys
+
+<Warning>
+  **Never commit private keys to git**
+  
+  Private keys should only exist in:
+  - Local `.env` files
+  - Encrypted secret storage
+  - Secure environment variable systems
+  
+  Add `.env` to your `.gitignore`:
+  ```
+  .env*
+  !.env.example
+  ```
+</Warning>
+
+## Automated Rotation
+
+For production agents, automate rotation:
+
+```js
+const vestauth = require('vestauth')
+const schedule = require('node-schedule')
+
+// Rotate every 90 days at midnight
+schedule.scheduleJob('0 0 1 */3 *', async () => {
+  try {
+    const uid = process.env.AGENT_UID
+    const privateJwk = JSON.parse(process.env.AGENT_PRIVATE_JWK)
+    
+    await vestauth.agent.rotate(uid, privateJwk)
+    console.log('✔ Keys rotated successfully')
+    
+    // Notify monitoring system
+    await notifySuccess('agent-key-rotation')
+  } catch (err) {
+    console.error('✗ Rotation failed:', err.message)
+    await alertOnCall('agent-key-rotation-failed', err)
+  }
+})
+```
+
+## Troubleshooting
+
+### Rotation fails with "Invalid signature"
+
+Ensure you're using the current private key:
+
+```sh
+# Check current agent status
+vestauth agent curl https://api.vestauth.com/whoami --pp
+
+# Verify AGENT_PRIVATE_JWK matches AGENT_PUBLIC_JWK
+```
+
+### Old key still accepted after rotation
+
+This is normal during the grace period. Tools accept both keys temporarily to prevent downtime.
+
+### Can't authenticate after rotation
+
+Verify your `.env` file was updated:
+
+```sh
+cat .env | grep AGENT_PUBLIC_JWK
+cat .env | grep AGENT_PRIVATE_JWK
+```
+
+If values look incorrect, try rotating again.
+
+## CLI Reference
+
+### `vestauth agent rotate`
+
+Rotate agent keys and update `.env` file.
+
+**Options:**
+
+- `--uid <id>` - Override `AGENT_UID` from environment
+- `--private-jwk <jwk>` - Override `AGENT_PRIVATE_JWK` from environment
+- `--hostname <url>` - Use custom Vestauth server (default: `api.vestauth.com`)
+- `--tag <tag>` - Override signature tag (default: `web-bot-auth`)
+- `--nonce <value>` - Provide custom nonce value
+
+**Examples:**
+
+```sh
+# Rotate with defaults
+vestauth agent rotate
+
+# Rotate on custom server
+vestauth agent rotate --hostname https://vestauth.example.com
+
+# Rotate specific agent
+vestauth agent rotate --uid agent-custom-id
+```
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Building Tools" icon="wrench" href="/advanced/building-tools">
+    Build tools that handle multi-key verification
+  </Card>
+  <Card title="Security Model" icon="shield" href="/advanced/security">
+    Understand key lifecycle security
+  </Card>
+</CardGroup>

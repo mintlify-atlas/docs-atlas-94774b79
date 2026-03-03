@@ -1,0 +1,199 @@
+---
+title: 'Tool Commands'
+description: 'Verify agent requests in your tools'
+icon: 'wrench'
+---
+
+## Overview
+
+Tool commands allow you to verify that HTTP requests were signed by a valid agent.
+
+## tool verify
+
+Verify an agent's signed request and retrieve the agent's identity.
+
+```bash
+vestauth tool verify <httpMethod> <uri> --signature <sig> --signature-input <input> --signature-agent <agent>
+```
+
+**Example:**
+```bash
+vestauth tool verify GET https://api.vestauth.com/whoami \
+  --signature "sig1=:H1kxwSRWFbIzKbHaUy4hQFp/JrmVTX//72JPHcW4W7cPt9q6LytRJgx5pUgWrrr7DCcMWgx/jpTPc8Ht8SZ3CQ==:" \
+  --signature-input "sig1=(\"@authority\");created=1770396709;keyid=\"FGzgs758DBGnI1S0BejChDsK0IKZm3qPpOOXdRnnBkM\";alg=\"ed25519\";expires=1770397009;nonce=\"BZSDVktdkjO6XH5jafAdPDttsB6eytXO7u8KXJN1tMtd5bprE3rp08HiaTRo7H6gZGtYb4_qtL7RiGi8P2Gq7w\";tag=\"web-bot-auth\"" \
+  --signature-agent "sig1=agent-609a4fd2ebf4e6347108c517.api.vestauth.com"
+```
+
+**Output:**
+```json
+{"uid":"agent-609a4fd2ebf4e6347108c517",...}
+```
+
+### Arguments
+
+<ParamField path="httpMethod" type="string" required>
+  HTTP method of the request being verified: `GET`, `POST`, `PUT`, `DELETE`, etc.
+</ParamField>
+
+<ParamField path="uri" type="string" required>
+  Full URI of the request including scheme and authority (e.g., `https://api.vestauth.com/whoami`)
+</ParamField>
+
+### Options
+
+<ParamField path="--signature" type="string" required>
+  Value of the `Signature` header from the agent's request.
+  
+  Format: `sig1=:BASE64_SIGNATURE:`
+</ParamField>
+
+<ParamField path="--signature-input" type="string" required>
+  Value of the `Signature-Input` header from the agent's request.
+  
+  Contains signature metadata: covered components, created timestamp, key ID, algorithm, expiration, nonce, and tag.
+</ParamField>
+
+<ParamField path="--signature-agent" type="string" required>
+  Value of the `Signature-Agent` header from the agent's request.
+  
+  Format: `sig1=AGENT_UID.HOSTNAME`
+</ParamField>
+
+<ParamField path="--pp" type="boolean">
+  Pretty-print JSON output.
+  
+  Alias: `--pretty-print`
+</ParamField>
+
+### How It Works
+
+1. Parses the `Signature-Agent` header to extract the agent UID
+2. Fetches the agent's public key from the `.well-known` discovery endpoint
+3. Verifies the signature matches the request using the public key
+4. Checks signature expiration and validates all parameters
+5. Returns agent identity if verification succeeds
+
+### Response Format
+
+On successful verification:
+
+```json
+{
+  "uid": "agent-609a4fd2ebf4e6347108c517",
+  "kid": "FGzgs758DBGnI1S0BejChDsK0IKZm3qPpOOXdRnnBkM",
+  "public_jwk": {
+    "crv": "Ed25519",
+    "x": "QjutZ3_tt2jRD_XSOq4EFCDivnwEzKIrQB2yReddsNo",
+    "kty": "OKP",
+    "kid": "ZCa5pijSUCw7QKgBs6nkvBBzbEjTMKYSt6iwCDQdIYc"
+  },
+  "well_known_url": "https://agent-609a4fd2ebf4e6347108c517.api.vestauth.com/.well-known/http-message-signatures-directory"
+}
+```
+
+### Error Handling
+
+Verification fails if:
+
+- Signature is cryptographically invalid
+- Request has expired (based on `expires` parameter)
+- Public key cannot be retrieved
+- Signature format is malformed
+- HTTP method or URI don't match the signature
+
+<Warning>
+  Always verify requests on the server side. Never trust client-provided verification results.
+</Warning>
+
+### Integration Example
+
+Here's how to use `tool verify` in a shell script:
+
+```bash
+#!/bin/bash
+
+# Extract headers from incoming request
+SIGNATURE="$HTTP_SIGNATURE"
+SIGNATURE_INPUT="$HTTP_SIGNATURE_INPUT"
+SIGNATURE_AGENT="$HTTP_SIGNATURE_AGENT"
+
+# Verify the request
+AGENT=$(vestauth tool verify GET https://api.example.com/endpoint \
+  --signature "$SIGNATURE" \
+  --signature-input "$SIGNATURE_INPUT" \
+  --signature-agent "$SIGNATURE_AGENT")
+
+if [ $? -eq 0 ]; then
+  echo "Verified agent: $AGENT"
+  # Process request
+else
+  echo "Verification failed"
+  exit 1
+fi
+```
+
+## Library Usage
+
+For programmatic verification, use the `vestauth` library instead:
+
+```javascript
+const vestauth = require('vestauth')
+
+app.post('/whoami', async (req, res) => {
+  try {
+    const url = `${req.protocol}://${req.get('host')}${req.originalUrl}`
+    const agent = await vestauth.tool.verify(req.method, url, req.headers)
+    
+    res.json(agent)
+  } catch (err) {
+    res.status(401).json({ code: 401, error: { message: err.message }})
+  }
+})
+```
+
+See [Library Reference](/library/tool-verify) for more details.
+
+## Security Considerations
+
+### Replay Attack Protection
+
+Each signature includes:
+- `created` timestamp - when signature was created
+- `expires` timestamp - when signature expires (typically 5 minutes)
+- `nonce` - unique random value
+
+Optionally track nonces in your tool to prevent replay attacks within the signature validity window.
+
+### SSRF Prevention
+
+Vestauth only fetches public keys from trusted domains:
+- `*.api.vestauth.com` (default)
+- Custom domains via `TOOL_FQDN_REGEX` environment variable
+
+This prevents Server-Side Request Forgery (SSRF) attacks.
+
+### Key Caching
+
+Cache public keys to reduce latency and external requests:
+
+```javascript
+const keyCache = new Map()
+
+async function getPublicKey(agentUid) {
+  if (keyCache.has(agentUid)) {
+    return keyCache.get(agentUid)
+  }
+  
+  const key = await fetchPublicKey(agentUid)
+  keyCache.set(agentUid, key)
+  return key
+}
+```
+
+Invalidate cache periodically or on key rotation events.
+
+## Related
+
+- [Agent Commands](/cli/agent-commands) - Create identities and sign requests
+- [Primitives verify](/cli/primitives-commands#primitives-verify) - Low-level signature verification
+- [Library: tool.verify()](/library/tool-verify) - Programmatic verification

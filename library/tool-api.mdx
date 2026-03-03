@@ -1,0 +1,428 @@
+---
+title: 'Tool API'
+description: 'Verify and authenticate agent requests in your tools'
+---
+
+## Overview
+
+The Tool API provides a single method for verifying cryptographically signed agent requests. Use this API when building tools that need to authenticate agents.
+
+```javascript
+const vestauth = require('vestauth')
+
+app.post('/whoami', async (req, res) => {
+  try {
+    const url = `${req.protocol}://${req.get('host')}${req.originalUrl}`
+    const agent = await vestauth.tool.verify(req.method, url, req.headers)
+    
+    res.json(agent)
+  } catch (err) {
+    res.status(401).json({ code: 401, error: { message: err.message }})
+  }
+})
+```
+
+---
+
+## tool.verify()
+
+Verifies a signed HTTP request by validating the signature and fetching the agent's public key from the discovery endpoint.
+
+### Signature
+
+```typescript
+tool.verify(
+  httpMethod: HttpMethod,
+  uri: string,
+  headers?: HeaderBag
+): Promise<VerifyResult>
+```
+
+### Parameters
+
+<ParamField path="httpMethod" type="string" required>
+  The HTTP method of the request being verified (e.g., `GET`, `POST`, `PUT`, `DELETE`)
+</ParamField>
+
+<ParamField path="uri" type="string" required>
+  The full request URI including scheme, host, and path (e.g., `https://api.example.com/data`)
+</ParamField>
+
+<ParamField path="headers" type="HeaderBag" optional>
+  The request headers object containing:
+  - `Signature` (or `signature`)
+  - `Signature-Input` (or `signature-input`)
+  - `Signature-Agent` (or `signature-agent`)
+  
+  Header names are case-insensitive.
+</ParamField>
+
+### Returns
+
+<ResponseField name="uid" type="string">
+  The agent's unique identifier (e.g., `agent-4b94ccd425e939fac5016b6b`)
+</ResponseField>
+
+<ResponseField name="kid" type="string">
+  The key ID used to sign the request
+</ResponseField>
+
+<ResponseField name="public_jwk" type="PublicJwk">
+  The agent's public key in JWK format
+</ResponseField>
+
+<ResponseField name="well_known_url" type="string">
+  The URL where the agent's public keys were discovered (e.g., `https://agent-609a4fd2ebf4e6347108c517.api.vestauth.com/.well-known/http-message-signatures-directory`)
+</ResponseField>
+
+### Example
+
+<Tabs>
+  <Tab title="Express">
+    ```javascript
+    const express = require('express')
+    const vestauth = require('vestauth')
+    
+    const app = express()
+    
+    app.post('/whoami', async (req, res) => {
+      try {
+        const url = `${req.protocol}://${req.get('host')}${req.originalUrl}`
+        const agent = await vestauth.tool.verify(req.method, url, req.headers)
+        
+        res.json({
+          message: 'Authenticated successfully',
+          agent: {
+            uid: agent.uid,
+            kid: agent.kid,
+            discoveredFrom: agent.well_known_url
+          }
+        })
+      } catch (err) {
+        res.status(401).json({
+          code: 401,
+          error: { message: err.message }
+        })
+      }
+    })
+    
+    app.listen(3000)
+    ```
+  </Tab>
+  <Tab title="Fastify">
+    ```javascript
+    const fastify = require('fastify')({ logger: true })
+    const vestauth = require('vestauth')
+    
+    fastify.post('/whoami', async (request, reply) => {
+      try {
+        const url = `${request.protocol}://${request.hostname}${request.url}`
+        const agent = await vestauth.tool.verify(
+          request.method,
+          url,
+          request.headers
+        )
+        
+        return {
+          message: 'Authenticated successfully',
+          agent: {
+            uid: agent.uid,
+            kid: agent.kid
+          }
+        }
+      } catch (err) {
+        reply.code(401)
+        return { code: 401, error: { message: err.message } }
+      }
+    })
+    
+    fastify.listen({ port: 3000 })
+    ```
+  </Tab>
+  <Tab title="Next.js API Route">
+    ```javascript
+    // pages/api/whoami.js
+    import vestauth from 'vestauth'
+    
+    export default async function handler(req, res) {
+      if (req.method !== 'POST') {
+        return res.status(405).json({ error: 'Method not allowed' })
+      }
+      
+      try {
+        const url = `${req.headers['x-forwarded-proto'] || 'https'}://${req.headers.host}${req.url}`
+        const agent = await vestauth.tool.verify('POST', url, req.headers)
+        
+        res.status(200).json({
+          message: 'Authenticated successfully',
+          agent: {
+            uid: agent.uid,
+            kid: agent.kid
+          }
+        })
+      } catch (err) {
+        res.status(401).json({
+          code: 401,
+          error: { message: err.message }
+        })
+      }
+    }
+    ```
+  </Tab>
+</Tabs>
+
+---
+
+## How It Works
+
+1. **Extract Signature Headers**: The method reads `Signature`, `Signature-Input`, and `Signature-Agent` from the request headers
+
+2. **Parse Agent Identity**: Extracts the agent UID from the `Signature-Agent` header (e.g., `agent-609a4fd2ebf4e6347108c517`)
+
+3. **Fetch Public Key**: Makes a request to the agent's `.well-known` discovery endpoint to retrieve the public key:
+   ```
+   https://agent-609a4fd2ebf4e6347108c517.api.vestauth.com/.well-known/http-message-signatures-directory
+   ```
+
+4. **Verify Signature**: Uses the public key to cryptographically verify the request signature matches the HTTP method and URI
+
+5. **Check Expiration**: Validates that the signature hasn't expired based on the `expires` timestamp
+
+6. **Return Agent Info**: Returns the verified agent's UID, key ID, and public key
+
+---
+
+## Security Features
+
+### SSRF Protection
+
+Vestauth prevents Server-Side Request Forgery (SSRF) attacks by only fetching public keys from trusted domains:
+
+- Default trusted domain: `*.api.vestauth.com`
+- Custom domains via `TOOL_FQDN_REGEX` environment variable
+
+```bash .env
+TOOL_FQDN_REGEX=".*\.api\.vestauth\.com|.*\.agents\.example\.com"
+```
+
+<Warning>
+  Never set `TOOL_FQDN_REGEX` to `.*` as this would allow fetching from any domain, exposing your server to SSRF attacks.
+</Warning>
+
+### Signature Expiration
+
+Signatures include an `expires` timestamp. Expired signatures are automatically rejected:
+
+```javascript
+try {
+  const agent = await vestauth.tool.verify(method, url, headers)
+} catch (error) {
+  if (error.message.includes('expired')) {
+    console.error('Signature has expired')
+  }
+}
+```
+
+### Nonce Support
+
+Each signature includes a unique nonce to prevent replay attacks. While Vestauth validates signature freshness via timestamps, you can optionally track nonces for additional protection:
+
+```javascript
+const usedNonces = new Set()
+
+app.post('/protected', async (req, res) => {
+  try {
+    const agent = await vestauth.tool.verify(req.method, url, req.headers)
+    
+    // Extract nonce from Signature-Input header
+    const signatureInput = req.headers['signature-input']
+    const nonceMatch = signatureInput.match(/nonce="([^"]+)"/)
+    const nonce = nonceMatch?.[1]
+    
+    if (usedNonces.has(nonce)) {
+      return res.status(401).json({ error: 'Nonce already used' })
+    }
+    
+    usedNonces.add(nonce)
+    
+    // Process request...
+  } catch (err) {
+    res.status(401).json({ error: err.message })
+  }
+})
+```
+
+---
+
+## Error Handling
+
+`tool.verify()` throws errors for various failure cases:
+
+```javascript
+try {
+  const agent = await vestauth.tool.verify(method, url, headers)
+} catch (error) {
+  // Missing required headers
+  if (error.message.includes('missing')) {
+    return res.status(400).json({ error: 'Missing signature headers' })
+  }
+  
+  // Invalid or expired signature
+  if (error.message.includes('invalid') || error.message.includes('expired')) {
+    return res.status(401).json({ error: 'Invalid or expired signature' })
+  }
+  
+  // Untrusted agent domain
+  if (error.message.includes('untrusted')) {
+    return res.status(403).json({ error: 'Agent from untrusted domain' })
+  }
+  
+  // Other errors
+  return res.status(500).json({ error: 'Verification failed' })
+}
+```
+
+### Common Error Messages
+
+| Error | Cause | Solution |
+|-------|-------|----------|
+| `Missing http method` | No HTTP method provided | Ensure first parameter is provided |
+| `Missing uri` | No URI provided | Ensure second parameter is provided |
+| `Missing signature-agent header` | Request lacks `Signature-Agent` | Client must use `vestauth.agent.headers()` |
+| `Missing signature-input header` | Request lacks `Signature-Input` | Client must use `vestauth.agent.headers()` |
+| `Invalid signature` | Signature doesn't match | Client may have wrong keys or tampered request |
+| `Expired signature` | Signature timestamp is past | Client's clock may be wrong or signature is old |
+| `Untrusted signature-agent` | Agent domain not in allowlist | Add domain to `TOOL_FQDN_REGEX` if intentional |
+
+---
+
+## Middleware Pattern
+
+Create reusable authentication middleware:
+
+```javascript
+const vestauth = require('vestauth')
+
+// Express middleware
+function requireAgent(req, res, next) {
+  const url = `${req.protocol}://${req.get('host')}${req.originalUrl}`
+  
+  vestauth.tool.verify(req.method, url, req.headers)
+    .then(agent => {
+      req.agent = agent
+      next()
+    })
+    .catch(err => {
+      res.status(401).json({
+        code: 401,
+        error: { message: err.message }
+      })
+    })
+}
+
+// Use middleware
+app.post('/protected', requireAgent, (req, res) => {
+  res.json({
+    message: 'You are authenticated',
+    agent: req.agent.uid
+  })
+})
+```
+
+---
+
+## Type Definitions
+
+```typescript
+type HttpMethod = 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE' | 'OPTIONS' | 'HEAD' | (string & {})
+
+type HeaderValue = string | string[]
+type HeaderBag = Record<string, HeaderValue | undefined>
+
+interface PublicJwk {
+  kty: 'OKP'
+  crv: 'Ed25519'
+  x: string
+  kid?: string
+  [prop: string]: unknown
+}
+
+interface VerifyResult {
+  uid?: string
+  kid?: string
+  public_jwk?: PublicJwk
+  well_known_url?: string
+}
+```
+
+---
+
+## Complete Example: Building a Tool
+
+Here's a complete example of a simple file storage tool:
+
+```javascript
+const express = require('express')
+const vestauth = require('vestauth')
+
+const app = express()
+app.use(express.json())
+
+const fileStore = new Map()
+
+// Middleware to verify agent
+async function requireAgent(req, res, next) {
+  try {
+    const url = `${req.protocol}://${req.get('host')}${req.originalUrl}`
+    req.agent = await vestauth.tool.verify(req.method, url, req.headers)
+    next()
+  } catch (err) {
+    res.status(401).json({ error: err.message })
+  }
+}
+
+// Write file
+app.post('/write', requireAgent, (req, res) => {
+  const { filepath, content } = req.body
+  const key = `${req.agent.uid}:${filepath}`
+  
+  fileStore.set(key, content)
+  
+  res.json({ success: true, filepath })
+})
+
+// Read file
+app.post('/read', requireAgent, (req, res) => {
+  const { filepath } = req.body
+  const key = `${req.agent.uid}:${filepath}`
+  
+  const content = fileStore.get(key)
+  
+  if (!content) {
+    return res.status(404).json({ error: 'File not found' })
+  }
+  
+  res.json({ filepath, content })
+})
+
+// List files
+app.get('/list', requireAgent, (req, res) => {
+  const files = Array.from(fileStore.keys())
+    .filter(key => key.startsWith(`${req.agent.uid}:`))
+    .map(key => key.substring(req.agent.uid.length + 1))
+  
+  res.json({ files })
+})
+
+app.listen(3000, () => {
+  console.log('Tool listening on port 3000')
+})
+```
+
+---
+
+## See Also
+
+- [Agent API](/library/agent-api) - Create agents and sign requests
+- [Primitives API](/library/primitives-api) - Low-level verification
+- [Building Tools Guide](/advanced/building-tools) - Complete guide to tool development

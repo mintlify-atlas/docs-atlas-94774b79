@@ -1,0 +1,434 @@
+---
+title: 'Primitives Commands'
+description: 'Low-level cryptographic operations for advanced use cases'
+icon: 'gears'
+---
+
+## Overview
+
+Primitives are low-level commands for cryptographic operations. Use these when you need fine-grained control over keypairs, signatures, and verification without the higher-level abstractions.
+
+<Info>
+  Most users should use [Agent Commands](/cli/agent-commands) instead. Primitives are for advanced use cases and library development.
+</Info>
+
+## primitives keypair
+
+Generate a new Ed25519 public/private keypair.
+
+```bash
+vestauth primitives keypair
+```
+
+**Output:**
+```json
+{
+  "public_jwk": {
+    "crv": "Ed25519",
+    "x": "QjutZ3_tt2jRD_XSOq4EFCDivnwEzKIrQB2yReddsNo",
+    "kty": "OKP",
+    "kid": "ZCa5pijSUCw7QKgBs6nkvBBzbEjTMKYSt6iwCDQdIYc"
+  },
+  "private_jwk": {
+    "crv": "Ed25519",
+    "d": "RTyREuKAEfIMMs2ejwaKtFefZxt14HmsRR0rFj4U5iM",
+    "x": "QjutZ3_tt2jRD_XSOq4EFCDivnwEzKIrQB2yReddsNo",
+    "kty": "OKP",
+    "kid": "ZCa5pijSUCw7QKgBs6nkvBBzbEjTMKYSt6iwCDQdIYc"
+  }
+}
+```
+
+### Options
+
+<ParamField path="--private-jwk" type="string">
+  Use an existing private JWK instead of generating a new one. Useful for deriving the public key from a known private key.
+</ParamField>
+
+<ParamField path="--prefix" type="string" default="agent">
+  UID prefix type: `agent`, `tool`, or `none`.
+  
+  - `agent` - Generates UID like `agent-4b94ccd425e939fac5016b6b`
+  - `tool` - Generates UID like `tool-4b94ccd425e939fac5016b6b`
+  - `none` - No prefix, just the hash
+</ParamField>
+
+<ParamField path="--pp" type="boolean">
+  Pretty-print JSON output.
+  
+  Alias: `--pretty-print`
+</ParamField>
+
+### Examples
+
+<CodeGroup>
+```bash Generate New Keypair
+vestauth primitives keypair --pp
+```
+
+```bash Tool Keypair
+vestauth primitives keypair --prefix tool --pp
+```
+
+```bash Derive Public from Private
+vestauth primitives keypair \
+  --private-jwk '{"crv":"Ed25519","d":"RyFk7QTOk_bMjFQKjyAR-vJDp7BITn9U0YBFNdpR9wE","x":"hyAxNMbuTcFQq420Dr46ucF0dRZ_FIyxgsujruEoklM","kty":"OKP","kid":"UfHTArlyLsqM8cB8sNfH2z6XOwc0RmJIq2CAPGfvMjk"}' \
+  --pp
+```
+</CodeGroup>
+
+### Key Format (JWK)
+
+Vestauth uses JSON Web Key (JWK) format for Ed25519 keys:
+
+**Public JWK:**
+```json
+{
+  "crv": "Ed25519",        // Curve type
+  "x": "BASE64URL",         // Public key bytes
+  "kty": "OKP",             // Key type (Octet Key Pair)
+  "kid": "KEY_ID"           // Key identifier (SHA-256 hash)
+}
+```
+
+**Private JWK:**
+```json
+{
+  "crv": "Ed25519",
+  "d": "BASE64URL",          // Private key bytes (secret!)
+  "x": "BASE64URL",          // Public key bytes
+  "kty": "OKP",
+  "kid": "KEY_ID"
+}
+```
+
+<Warning>
+  Never share the private JWK (`d` field). This is your secret signing key.
+</Warning>
+
+---
+
+## primitives headers
+
+Generate HTTP Message Signature headers for a request.
+
+```bash
+vestauth primitives headers <httpMethod> <uri>
+```
+
+**Example:**
+```bash
+vestauth primitives headers GET http://example.com --pp
+```
+
+**Output:**
+```json
+{
+  "Signature": "sig1=:K7z3Nozcq1z5zfJhrd540DWYbjyQ1kR/S7ZDcMXE5gVhxezvG6Rn9BxEvfteiAnBuQhOkvbpGtF83WpQQerGBw==:",
+  "Signature-Input": "sig1=(\"@authority\");created=1770263541;keyid=\"_4GFBGmXKinLBoh3-GJZCiLBt-84GP9Fb0iBzmYncUg\";alg=\"ed25519\";expires=1770263841;nonce=\"0eu7hVMVFm61lQvIryKNmZXIbzkkgpVocoKvN0de5QO8Eu5slTxklJAcVLQs0L_UTVtx4f8qJcqYZ21JTeOQww\";tag=\"web-bot-auth\"",
+  "Signature-Agent": "sig1=agent-35e4a794a904d227ee2373b6.api.vestauth.com"
+}
+```
+
+### Arguments
+
+<ParamField path="httpMethod" type="string" required>
+  HTTP method: `GET`, `POST`, `PUT`, `DELETE`, etc.
+</ParamField>
+
+<ParamField path="uri" type="string" required>
+  Full URI including scheme and authority (e.g., `https://api.example.com/path`)
+</ParamField>
+
+### Options
+
+<ParamField path="--uid" type="string">
+  Agent or tool UID. Defaults to `AGENT_UID` or `AGENT_ID` environment variable.
+  
+  If not provided, generates a new random UID.
+  
+  Alias: `--id`
+</ParamField>
+
+<ParamField path="--private-jwk" type="string">
+  Private JWK for signing. Defaults to `AGENT_PRIVATE_JWK` environment variable.
+  
+  If not provided, generates a new keypair.
+</ParamField>
+
+<ParamField path="--tag" type="string" default="web-bot-auth">
+  Signature tag value per [Web-Bot-Auth draft](https://datatracker.ietf.org/doc/html/draft-meunier-web-bot-auth-architecture).
+</ParamField>
+
+<ParamField path="--nonce" type="string">
+  Custom nonce value. By default, a cryptographically random 64-byte nonce is generated.
+</ParamField>
+
+<ParamField path="--pp" type="boolean">
+  Pretty-print JSON output.
+  
+  Alias: `--pretty-print`
+</ParamField>
+
+### Examples
+
+<CodeGroup>
+```bash Basic
+vestauth primitives headers GET https://api.example.com/endpoint --pp
+```
+
+```bash With Custom UID
+vestauth primitives headers POST https://api.example.com/create \
+  --uid agent-custom-123 \
+  --pp
+```
+
+```bash With Custom Keypair
+vestauth primitives headers GET https://api.example.com/data \
+  --uid tool-service-1 \
+  --private-jwk '{"crv":"Ed25519","d":"...","x":"...","kty":"OKP","kid":"..."}' \
+  --pp
+```
+</CodeGroup>
+
+### Signature Components
+
+**Signature Header:**
+```
+Signature: sig1=:BASE64_SIGNATURE:
+```
+
+The cryptographic signature of the request using Ed25519.
+
+**Signature-Input Header:**
+```
+Signature-Input: sig1=("@authority");created=1770263541;keyid="...";alg="ed25519";expires=1770263841;nonce="...";tag="web-bot-auth"
+```
+
+Contains:
+- Covered components: `@authority` (hostname)
+- `created` - Unix timestamp when signature was created
+- `keyid` - Public key identifier
+- `alg` - Signature algorithm (`ed25519`)
+- `expires` - Unix timestamp when signature expires (created + 5 minutes)
+- `nonce` - Random value to prevent replay attacks
+- `tag` - Protocol identifier (`web-bot-auth`)
+
+**Signature-Agent Header:**
+```
+Signature-Agent: sig1=AGENT_UID.HOSTNAME
+```
+
+Identifies the agent and provides the discovery domain.
+
+---
+
+## primitives verify
+
+Verify HTTP Message Signature headers using a public key.
+
+```bash
+vestauth primitives verify <httpMethod> <uri> --signature <sig> --signature-input <input> [--signature-agent <agent>] [--public-jwk <key>]
+```
+
+**Example:**
+```bash
+vestauth primitives verify GET https://api.vestauth.com/whoami \
+  --signature "sig1=:UHqXQbWZmyYW40JRcdCl+NLccLgPmcoirUKwLtdcpEcIgxG2+i+Q2U3yIYeMquseON3fKm29WSL2ntHeRefHBQ==:" \
+  --signature-input "sig1=(\"@authority\");created=1770395703;keyid=\"FGzgs758DBGnI1S0BejChDsK0IKZm3qPpOOXdRnnBkM\";alg=\"ed25519\";expires=1770396003;nonce=\"O8JOC1reBofwbpPcdD-MRRCdrtAf4khvJTuhpRI_RiaH_hpU93okLkmPZVFFcUEdYtYfcduaB8Sca54GTd2GXA\";tag=\"web-bot-auth\"" \
+  --signature-agent "sig1=agent-609a4fd2ebf4e6347108c517.api.vestauth.com"
+```
+
+**Output:**
+```json
+{"uid":"agent-609a4fd2ebf4e6347108c517", ...}
+```
+
+### Arguments
+
+<ParamField path="httpMethod" type="string" required>
+  HTTP method of the request being verified.
+</ParamField>
+
+<ParamField path="uri" type="string" required>
+  Full URI of the request being verified.
+</ParamField>
+
+### Options
+
+<ParamField path="--signature" type="string" required>
+  Value of the `Signature` header.
+</ParamField>
+
+<ParamField path="--signature-input" type="string" required>
+  Value of the `Signature-Input` header.
+</ParamField>
+
+<ParamField path="--signature-agent" type="string">
+  Value of the `Signature-Agent` header.
+  
+  If provided, fetches the public key from the agent's `.well-known` discovery endpoint.
+  
+  If omitted, you must provide `--public-jwk`.
+</ParamField>
+
+<ParamField path="--public-jwk" type="string">
+  Public JWK to verify against. Defaults to `AGENT_PUBLIC_JWK` environment variable.
+  
+  Required if `--signature-agent` is not provided.
+</ParamField>
+
+<ParamField path="--pp" type="boolean">
+  Pretty-print JSON output.
+  
+  Alias: `--pretty-print`
+</ParamField>
+
+### Verification Modes
+
+**Mode 1: With Agent Discovery**
+
+Provide `--signature-agent` to fetch the public key automatically:
+
+```bash
+vestauth primitives verify GET https://api.example.com/endpoint \
+  --signature "sig1=:..." \
+  --signature-input "sig1=..." \
+  --signature-agent "sig1=agent-123.api.vestauth.com"
+```
+
+**Mode 2: With Known Public Key**
+
+Provide `--public-jwk` directly:
+
+```bash
+vestauth primitives verify GET https://api.example.com/endpoint \
+  --signature "sig1=:..." \
+  --signature-input "sig1=..." \
+  --public-jwk '{"crv":"Ed25519","x":"...","kty":"OKP","kid":"..."}'
+```
+
+### What Gets Verified
+
+1. **Signature Validity**: Cryptographic signature matches the request
+2. **Expiration**: Signature has not expired
+3. **Algorithm**: Uses supported algorithm (Ed25519)
+4. **Key ID**: Matches the public key
+5. **Components**: Signed components match the request
+
+### Error Codes
+
+Verification fails with specific errors:
+
+- **Invalid signature**: Signature does not match
+- **Expired**: Current time > `expires` timestamp
+- **Invalid key**: Public key format is invalid
+- **Algorithm mismatch**: Signature algorithm not supported
+- **Missing components**: Required signature components missing
+
+---
+
+## Use Cases
+
+### Custom Agent Implementation
+
+Build your own agent in any language:
+
+```python
+import subprocess
+import json
+import requests
+
+# Generate keypair
+result = subprocess.run(
+    ['vestauth', 'primitives', 'keypair', '--pp'],
+    capture_output=True,
+    text=True
+)
+keys = json.loads(result.stdout)
+
+# Generate headers for request
+result = subprocess.run([
+    'vestauth', 'primitives', 'headers',
+    'POST', 'https://api.example.com/endpoint',
+    '--uid', 'agent-custom',
+    '--private-jwk', json.dumps(keys['private_jwk']),
+    '--pp'
+], capture_output=True, text=True)
+
+headers = json.loads(result.stdout)
+
+# Make request
+response = requests.post(
+    'https://api.example.com/endpoint',
+    headers=headers,
+    json={'data': 'value'}
+)
+```
+
+### Custom Tool Verification
+
+Verify signatures in any language:
+
+```ruby
+require 'json'
+require 'open3'
+
+def verify_agent(method, uri, headers)
+  stdout, stderr, status = Open3.capture3(
+    'vestauth', 'primitives', 'verify',
+    method, uri,
+    '--signature', headers['Signature'],
+    '--signature-input', headers['Signature-Input'],
+    '--signature-agent', headers['Signature-Agent']
+  )
+  
+  if status.success?
+    JSON.parse(stdout)
+  else
+    raise "Verification failed: #{stderr}"
+  end
+end
+```
+
+### Testing Signatures
+
+Test signature generation and verification:
+
+```bash
+# Generate keypair
+KEYS=$(vestauth primitives keypair --pp)
+PRIVATE_JWK=$(echo $KEYS | jq -r '.private_jwk')
+PUBLIC_JWK=$(echo $KEYS | jq -r '.public_jwk')
+
+# Sign request
+HEADERS=$(vestauth primitives headers GET https://api.example.com/test \
+  --uid agent-test \
+  --private-jwk "$PRIVATE_JWK" \
+  --pp)
+
+SIGNATURE=$(echo $HEADERS | jq -r '.Signature')
+SIGNATURE_INPUT=$(echo $HEADERS | jq -r '."Signature-Input"')
+
+# Verify signature
+vestauth primitives verify GET https://api.example.com/test \
+  --signature "$SIGNATURE" \
+  --signature-input "$SIGNATURE_INPUT" \
+  --public-jwk "$PUBLIC_JWK" \
+  --pp
+```
+
+## Standards Compliance
+
+Primitives implement these standards:
+
+- **[RFC 9421](https://datatracker.ietf.org/doc/rfc9421/)** - HTTP Message Signatures
+- **[RFC 8032](https://datatracker.ietf.org/doc/rfc8032/)** - Edwards-Curve Digital Signature Algorithm (EdDSA)
+- **[RFC 7517](https://datatracker.ietf.org/doc/rfc7517/)** - JSON Web Key (JWK)
+- **[Web-Bot-Auth Draft](https://datatracker.ietf.org/doc/html/draft-meunier-web-bot-auth-architecture)** - Agent authentication headers
+
+## Related
+
+- [Agent Commands](/cli/agent-commands) - High-level agent operations
+- [Tool Commands](/cli/tool-commands) - High-level tool verification
+- [Library Reference](/library/primitives) - Programmatic primitives API

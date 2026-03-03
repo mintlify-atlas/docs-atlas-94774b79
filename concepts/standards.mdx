@@ -1,0 +1,353 @@
+---
+title: "Standards"
+description: "RFC 9421 and Web-Bot-Auth draft - why standards matter for agent authentication"
+---
+
+## Overview
+
+Vestauth is built on open internet standards for HTTP message signatures and agent authentication. This ensures interoperability, security, and long-term viability without vendor lock-in.
+
+## Why Standards Matter
+
+Standards-based authentication provides:
+
+- **Interoperability** - Agents and tools from different vendors can work together
+- **Security** - Cryptographic approaches are peer-reviewed and battle-tested
+- **Future-proof** - Standards evolve with community input and last decades
+- **No vendor lock-in** - Anyone can implement compatible agents and tools
+- **Ecosystem growth** - Standards enable a marketplace of compatible tools
+
+<Info>
+Vestauth focuses on developer ergonomics while staying compliant with emerging standards.
+</Info>
+
+## RFC 9421: HTTP Message Signatures
+
+[RFC 9421](https://datatracker.ietf.org/doc/rfc9421/) defines how to create and verify cryptographic signatures for HTTP messages.
+
+### Purpose
+
+RFC 9421 provides a standardized way to:
+
+- Sign HTTP requests and responses
+- Verify message integrity and authenticity
+- Prevent tampering and replay attacks
+- Support multiple signature algorithms
+
+### Key Concepts
+
+#### Signature Base
+
+The signature is computed over specific HTTP components:
+
+```
+"@authority": api.vestauth.com
+"@signature-params": ("@authority");created=1770247189;keyid="B0u80...";alg="ed25519";expires=1770247489;nonce="NURxn28X...";tag="web-bot-auth"
+```
+
+Vestauth signs the `@authority` component (the domain/host), ensuring the request was intended for the receiving service.
+
+#### Signature Parameters
+
+Metadata about the signature:
+
+| Parameter | Purpose |
+|-----------|----------|
+| `created` | When the signature was created |
+| `expires` | When the signature expires |
+| `keyid` | Which key was used to sign |
+| `alg` | Signature algorithm ("ed25519") |
+| `nonce` | Unique value to prevent replay |
+
+#### Signature Headers
+
+RFC 9421 defines three headers:
+
+**Signature:**
+```
+Signature: sig1=:d4Id5SXhUExsf1XyruD8eBmlDtWzt/vezoCS+SKf0M8CxSkhKBtdHH7KkYyMN6E0hmxmNHsYus11u32nhvpWBQ==:
+```
+
+**Signature-Input:**
+```
+Signature-Input: sig1=("@authority");created=1770247189;keyid="B0u80Gw28W9U2Jl5t_EBiWeBajO2104kOYZ9Ikucl5I";alg="ed25519";expires=1770247489;nonce="NURxn28X7zyKJ9k5bHxuOyO5qdvF9L5s2qHmhTrGUzbwGSIoUCHmwSlwiiCRgTDGuum83yyWMHJU4jmrVI_XPg";tag="web-bot-auth"
+```
+
+### Vestauth Implementation
+
+Vestauth implements RFC 9421 with:
+
+- **Algorithm**: Ed25519 signatures
+- **Components**: `@authority` (the request's host)
+- **Key format**: JSON Web Key (JWK)
+- **Signature format**: Base64-encoded binary signature
+
+```javascript src/lib/helpers/webBotAuthSignature.js
+const crypto = require('crypto')
+
+function webBotAuthSignature (method, uri, signatureParams, privateJwk) {
+  const message = authorityMessage(uri, signatureParams)
+
+  return crypto.sign(
+    null,
+    Buffer.from(message, 'utf8'),
+    privateJwkObject(privateJwk)
+  ).toString('base64')
+}
+```
+
+### Benefits for Agents
+
+<Accordion title="Request integrity">
+Signatures are computed over request components. Tampering with the request invalidates the signature.
+</Accordion>
+
+<Accordion title="Non-repudiation">
+Signatures cryptographically prove the request came from the agent holding the private key.
+</Accordion>
+
+<Accordion title="Replay protection">
+Expiration timestamps and nonces prevent intercepted requests from being reused.
+</Accordion>
+
+## Web-Bot-Auth Draft
+
+[Web-Bot-Auth](https://datatracker.ietf.org/doc/html/draft-meunier-web-bot-auth-architecture) is an IETF draft specification that defines authentication architecture for autonomous agents and bots.
+
+### Purpose
+
+Web-Bot-Auth extends RFC 9421 with:
+
+- Standard headers for agent identification
+- Public key discovery mechanisms
+- Agent identity format and lifecycle
+- Trust and verification patterns
+
+### Signature-Agent Header
+
+Web-Bot-Auth introduces the `Signature-Agent` header to identify agents:
+
+```
+Signature-Agent: sig1=agent-4b94ccd425e939fac5016b6b.api.vestauth.com
+```
+
+Format: `sig1={agent-uid}.{discovery-hostname}`
+
+This header tells tools:
+1. The agent's unique identifier
+2. Where to find the agent's public key
+
+### Public Key Discovery
+
+Web-Bot-Auth defines `.well-known` endpoints for public key discovery:
+
+```
+https://{agent-uid}.{hostname}/.well-known/http-message-signatures-directory
+```
+
+**Example:**
+```
+https://agent-4b94ccd425e939fac5016b6b.api.vestauth.com/.well-known/http-message-signatures-directory
+```
+
+Response (JWK Set):
+```json
+{
+  "keys": [
+    {
+      "crv": "Ed25519",
+      "x": "py2xNaAfjKZiau-jtmJls6h_3n8xJ1Ur0ie-n9b8zWg",
+      "kty": "OKP",
+      "kid": "B0u80Gw28W9U2Jl5t_EBiWeBajO2104kOYZ9Ikucl5I"
+    }
+  ]
+}
+```
+
+<Note>
+Discovery endpoints enable tools to verify agents without manual key exchange or registration.
+</Note>
+
+### Tag Parameter
+
+Web-Bot-Auth uses the `tag` parameter to identify agent requests:
+
+```
+tag="web-bot-auth"
+```
+
+This distinguishes agent signatures from other uses of RFC 9421 (like user authentication or service-to-service auth).
+
+### Vestauth Implementation
+
+Vestauth fully implements the Web-Bot-Auth draft:
+
+```javascript src/lib/helpers/headers.js
+async function headers (httpMethod, uri, uid, privateJwk, tag = 'web-bot-auth', nonce = null, hostname = null) {
+  const kid = thumbprint(privateJwk)
+  const signatureInput = signatureParams(privateJwk.kid, tag, nonce)
+  const signature = webBotAuthSignature(httpMethod, uri, signatureInput, privateJwk)
+  
+  const discoveryOrigin = getAgentDiscoveryOrigin(hostname)
+  const discoveryUrl = new URL(discoveryOrigin)
+  const signatureAgent = `${discoveryUrl.protocol}//${uid}.${discoveryUrl.host}`
+
+  return {
+    Signature: `sig1=:${signature}:`,
+    'Signature-Input': `sig1=${signatureInput}`,
+    'Signature-Agent': `sig1="${signatureAgent}"`
+  }
+}
+```
+
+## Standard Compliance
+
+### RFC 9421 Compliance
+
+✅ Implements HTTP message signature format  
+✅ Supports signature parameters (created, expires, keyid, alg, nonce)  
+✅ Uses standard signature base construction  
+✅ Compatible with RFC 9421 signature verification  
+
+### Web-Bot-Auth Compliance
+
+✅ Implements `Signature-Agent` header  
+✅ Uses `tag="web-bot-auth"` for agent identification  
+✅ Provides `.well-known` discovery endpoints  
+✅ Returns JWK Set format for public keys  
+✅ Follows agent UID format conventions  
+
+## Interoperability
+
+Because Vestauth follows standards, you can:
+
+**Build compatible agents:**
+```javascript
+// Any RFC 9421 compliant library can create compatible signatures
+const signature = signRFC9421({
+  method: 'GET',
+  url: 'https://example.com',
+  privateKey: ed25519PrivateKey,
+  components: ['@authority'],
+  params: {
+    created: Math.floor(Date.now() / 1000),
+    expires: Math.floor(Date.now() / 1000) + 300,
+    tag: 'web-bot-auth'
+  }
+})
+```
+
+**Build compatible tools:**
+```javascript
+// Any RFC 9421 compliant verifier can validate Vestauth signatures
+const verified = await verifyRFC9421({
+  method: req.method,
+  url: req.url,
+  headers: req.headers,
+  publicKey: await fetchPublicKey(agentUID)
+})
+```
+
+**Use existing libraries:**
+- HTTP signature libraries that support Ed25519
+- JWK/Jose libraries for key management
+- Standard HTTP clients for requests
+
+<Info>
+Vestauth provides convenience wrappers, but the underlying standards are universal.
+</Info>
+
+## Evolution and Future
+
+Standards evolve over time:
+
+### Current State
+
+- **RFC 9421**: Published standard (2024)
+- **Web-Bot-Auth**: IETF draft specification
+
+### Future Enhancements
+
+Possible additions to Web-Bot-Auth:
+
+- Agent capability negotiation
+- Agent-to-agent communication patterns
+- Revocation and trust lists
+- Extended discovery metadata
+
+<Note>
+Vestauth tracks these standards and will incorporate updates as they're finalized.
+</Note>
+
+## Why Not OAuth?
+
+OAuth is designed for delegated authorization ("allow this app to act on your behalf"). Vestauth is designed for autonomous agent authentication ("prove you are this agent").
+
+| Feature | OAuth | Vestauth |
+|---------|-------|----------|
+| **Purpose** | Delegated authorization | Direct authentication |
+| **User interaction** | Requires user consent flow | No user needed |
+| **Tokens** | Bearer tokens (shared secrets) | Cryptographic signatures |
+| **Browser** | Required for authorization | Not required |
+| **Complexity** | High (multiple flows, scopes) | Low (sign and verify) |
+| **Agent-first** | Designed for users | Designed for agents |
+
+<Accordion title="When to use OAuth">
+Use OAuth when:
+- An agent needs to act on behalf of a user
+- You need scope-based permissions
+- You're integrating with existing OAuth services
+
+Example: An agent scheduling calendar events for a user.
+</Accordion>
+
+<Accordion title="When to use Vestauth">
+Use Vestauth when:
+- Agents act autonomously (not on behalf of users)
+- No browser interaction is needed
+- You want cryptographic proof of identity
+- You're building agent-to-tool or agent-to-agent communication
+
+Example: An agent storing files or sending notifications.
+</Accordion>
+
+## Why Not API Keys?
+
+API keys are shared secrets. Anyone who obtains the key can impersonate the client.
+
+| Issue | API Keys | Vestauth |
+|-------|----------|----------|
+| **Secret sharing** | Keys are shared between agent and tool | Private key never leaves agent |
+| **Leak risk** | Key leak = full compromise | Public key can be published safely |
+| **Rotation** | Requires coordination with tools | Agent rotates independently |
+| **Attribution** | Hard to prove which agent used a key | Cryptographic proof of identity |
+| **Revocation** | Must track and revoke keys | Can revoke by removing public key |
+
+## Standards Resources
+
+<CardGroup cols={2}>
+  <Card title="RFC 9421" icon="book" href="https://datatracker.ietf.org/doc/rfc9421/">
+    HTTP Message Signatures specification
+  </Card>
+  <Card title="Web-Bot-Auth" icon="book" href="https://datatracker.ietf.org/doc/html/draft-meunier-web-bot-auth-architecture">
+    Web-Bot-Auth draft specification
+  </Card>
+</CardGroup>
+
+<Note>
+Vestauth's compliance badges are displayed in the [README](https://github.com/vestauth/vestauth):
+
+[![RFC 9421 Compatible](https://img.shields.io/badge/RFC%209421-Compatible-0A7F5A)](https://datatracker.ietf.org/doc/rfc9421/)
+[![Web-Bot-Auth Draft Compatible](https://img.shields.io/badge/Web--Bot--Auth-Draft%20Compatible-0A7F5A)](https://datatracker.ietf.org/doc/html/draft-meunier-web-bot-auth-architecture)
+</Note>
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Identity" icon="fingerprint" href="/concepts/identity">
+    Learn about agent identities and keypairs
+  </Card>
+  <Card title="Authentication" icon="shield" href="/concepts/authentication">
+    Understand how signature verification works
+  </Card>
+</CardGroup>

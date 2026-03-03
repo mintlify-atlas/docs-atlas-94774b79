@@ -1,0 +1,205 @@
+---
+title: 'Library Overview'
+description: 'Use Vestauth programmatically in your Node.js applications'
+---
+
+## Installation
+
+Install Vestauth as a dependency in your Node.js project:
+
+```bash npm
+npm install vestauth
+```
+
+```bash yarn
+yarn add vestauth
+```
+
+```bash pnpm
+pnpm add vestauth
+```
+
+## Quick Start
+
+Vestauth provides three main APIs for different use cases:
+
+### Agent API
+
+For creating and managing agent identities:
+
+```javascript
+const vestauth = require('vestauth')
+
+// Initialize a new agent
+const result = await vestauth.agent.init()
+console.log(result.AGENT_UID) // agent-4b94ccd425e939fac5016b6b
+
+// Generate signed headers for a request
+const headers = await vestauth.agent.headers('GET', 'https://api.example.com/data')
+```
+
+### Tool API
+
+For verifying agent requests in your tools:
+
+```javascript
+const vestauth = require('vestauth')
+
+app.post('/whoami', async (req, res) => {
+  try {
+    const url = `${req.protocol}://${req.get('host')}${req.originalUrl}`
+    const agent = await vestauth.tool.verify(req.method, url, req.headers)
+    
+    res.json(agent)
+  } catch (err) {
+    res.status(401).json({ code: 401, error: { message: err.message }})
+  }
+})
+```
+
+### Primitives API
+
+For low-level cryptographic operations:
+
+```javascript
+const vestauth = require('vestauth')
+
+// Generate a new Ed25519 keypair
+const kp = vestauth.primitives.keypair()
+console.log(kp.publicJwk)
+console.log(kp.privateJwk)
+
+// Sign headers with specific credentials
+const headers = await vestauth.primitives.headers(
+  'POST',
+  'https://api.example.com/data',
+  'agent-123',
+  JSON.stringify(privateJwk)
+)
+```
+
+## Import Styles
+
+<Tabs>
+  <Tab title="CommonJS">
+    ```javascript
+    const vestauth = require('vestauth')
+    
+    // Access APIs
+    vestauth.agent.init()
+    vestauth.tool.verify()
+    vestauth.primitives.keypair()
+    ```
+  </Tab>
+  <Tab title="ES Modules">
+    ```javascript
+    import vestauth from 'vestauth'
+    
+    // Access APIs
+    await vestauth.agent.init()
+    await vestauth.tool.verify()
+    vestauth.primitives.keypair()
+    ```
+  </Tab>
+  <Tab title="Destructured">
+    ```javascript
+    const { agent, tool, primitives } = require('vestauth')
+    
+    // Use directly
+    await agent.init()
+    await tool.verify()
+    primitives.keypair()
+    ```
+  </Tab>
+</Tabs>
+
+## API Reference
+
+<CardGroup cols={3}>
+  <Card title="Agent API" icon="robot" href="/library/agent-api">
+    Create agents, generate signatures, rotate keys
+  </Card>
+  <Card title="Tool API" icon="shield-check" href="/library/tool-api">
+    Verify and authenticate agent requests
+  </Card>
+  <Card title="Primitives API" icon="key" href="/library/primitives-api">
+    Low-level cryptographic operations
+  </Card>
+  <Card title="Server API" icon="server" href="/library/server-api">
+    Self-host Vestauth infrastructure
+  </Card>
+</CardGroup>
+
+## TypeScript Support
+
+Vestauth includes TypeScript type definitions. No additional `@types` package is needed:
+
+```typescript
+import vestauth from 'vestauth'
+import type { PublicJwk, PrivateJwk, SignatureHeaders, VerifyResult } from 'vestauth'
+
+const headers: SignatureHeaders = await vestauth.agent.headers(
+  'GET',
+  'https://api.example.com/data'
+)
+
+const result: VerifyResult = await vestauth.tool.verify(
+  'POST',
+  url,
+  requestHeaders
+)
+```
+
+## Environment Variables
+
+Vestauth reads agent credentials from environment variables (typically stored in `.env`):
+
+```ini .env
+AGENT_UID="agent-4b94ccd425e939fac5016b6b"
+AGENT_PUBLIC_JWK='{"crv":"Ed25519","x":"py2xNaAfjKZiau...","kty":"OKP","kid":"B0u80Gw28W9U2Jl5t..."}'
+AGENT_PRIVATE_JWK='{"crv":"Ed25519","d":"Z9vbwN-3eiFMVv_TPWXOxqSM...","x":"py2xNaAfjKZiau...","kty":"OKP","kid":"B0u80Gw28W9U2Jl5t..."}'
+AGENT_HOSTNAME="https://api.vestauth.com"
+```
+
+<Info>
+Use `vestauth.agent.init()` to automatically generate and save these credentials.
+</Info>
+
+## Standards Compliance
+
+Vestauth implements:
+
+- **[RFC 9421](https://datatracker.ietf.org/doc/rfc9421/)** - HTTP Message Signatures
+- **[Web-Bot-Auth Draft](https://datatracker.ietf.org/doc/html/draft-meunier-web-bot-auth-architecture)** - Agent authentication architecture
+- **Ed25519** - Modern elliptic curve cryptography
+- **JWK (RFC 7517)** - JSON Web Key format
+
+## Error Handling
+
+All async methods throw errors on failure. Wrap calls in try-catch blocks:
+
+```javascript
+try {
+  const agent = await vestauth.tool.verify(method, url, headers)
+  console.log('Verified agent:', agent.uid)
+} catch (error) {
+  if (error.message.includes('expired')) {
+    console.error('Signature has expired')
+  } else if (error.message.includes('invalid')) {
+    console.error('Invalid signature')
+  } else {
+    console.error('Verification failed:', error.message)
+  }
+}
+```
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Agent API" icon="arrow-right" href="/library/agent-api">
+    Learn how to create and manage agents
+  </Card>
+  <Card title="Tool API" icon="arrow-right" href="/library/tool-api">
+    Build tools that authenticate agents
+  </Card>
+</CardGroup>

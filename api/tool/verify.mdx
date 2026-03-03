@@ -1,0 +1,227 @@
+---
+title: tool.verify()
+description: Verifies signed requests with additional FQDN trust validation for tool providers
+---
+
+## Overview
+
+The `tool.verify()` method verifies RFC 9421 signed HTTP requests with additional security checks. It validates that the request signature is valid and that the signing agent's domain is trusted.
+
+<Info>
+  `tool.verify()` is a wrapper around `primitives.verify()` that adds FQDN (Fully Qualified Domain Name) trust validation. Use this method when building tools that need to verify requests from trusted agents only.
+</Info>
+
+## Signature
+
+```typescript
+tool.verify(
+  httpMethod: HttpMethod,
+  uri: string,
+  headers?: HeaderBag
+): Promise<VerifyResult>
+```
+
+## Parameters
+
+<ParamField path="httpMethod" type="HttpMethod" required>
+  The HTTP method of the request being verified.
+  
+  Valid values: `'GET'`, `'POST'`, `'PUT'`, `'PATCH'`, `'DELETE'`, `'OPTIONS'`, `'HEAD'`, or any custom string.
+</ParamField>
+
+<ParamField path="uri" type="string" required>
+  The full URI of the request being verified (e.g., `https://tool.example.com/api/action`).
+</ParamField>
+
+<ParamField path="headers" type="HeaderBag" default="{}">
+  The HTTP headers from the incoming request. Must include `Signature`, `Signature-Input`, and `Signature-Agent` headers.
+  
+  ```typescript
+  type HeaderBag = Record<string, string | string[] | undefined>
+  ```
+</ParamField>
+
+## Return Value
+
+Returns a Promise that resolves to a `VerifyResult` object:
+
+<ResponseField name="uid" type="string">
+  The unique identifier of the agent that signed the request.
+</ResponseField>
+
+<ResponseField name="kid" type="string">
+  The key ID (thumbprint) of the public key used to sign the request.
+</ResponseField>
+
+<ResponseField name="public_jwk" type="PublicJwk">
+  The public JWK that was used to verify the signature.
+  
+  ```typescript
+  {
+    kty: 'OKP',
+    crv: 'Ed25519',
+    x: string,
+    kid?: string
+  }
+  ```
+</ResponseField>
+
+<ResponseField name="well_known_url" type="string">
+  The well-known URL where the public key was discovered (if applicable).
+</ResponseField>
+
+## Trust Validation
+
+The `tool.verify()` method validates that the signing agent's domain matches one of these trusted patterns:
+
+1. **Vestauth API**: `*.api.vestauth.com`
+2. **Server Hostname**: Matches the configured server hostname (if using Vestauth server)
+3. **Custom Pattern**: Matches the `TOOL_FQDN_REGEX` environment variable (if set)
+
+If the agent's domain doesn't match any trusted pattern, the method throws an `untrustedSignatureAgent` error.
+
+## Example
+
+```javascript
+import { tool } from 'vestauth'
+import express from 'express'
+
+const app = express()
+
+app.post('/api/action', async (req, res) => {
+  try {
+    // Verify the incoming request
+    const result = await tool.verify(
+      req.method,
+      `https://${req.get('host')}${req.originalUrl}`,
+      req.headers
+    )
+    
+    console.log('Verified agent:', result.uid)
+    console.log('Using key:', result.kid)
+    
+    // Process the authenticated request
+    res.json({ success: true, agent: result.uid })
+    
+  } catch (error) {
+    console.error('Verification failed:', error.message)
+    res.status(401).json({ error: 'Unauthorized' })
+  }
+})
+
+app.listen(3000)
+```
+
+## Example with Next.js API Route
+
+```javascript
+import { tool } from 'vestauth'
+
+export default async function handler(req, res) {
+  const uri = `https://${req.headers.host}${req.url}`
+  
+  try {
+    const result = await tool.verify(req.method, uri, req.headers)
+    
+    // Agent is verified and trusted
+    return res.status(200).json({
+      message: 'Action completed',
+      agent: result.uid
+    })
+    
+  } catch (error) {
+    return res.status(401).json({
+      error: error.message
+    })
+  }
+}
+```
+
+## Example Output
+
+```javascript
+{
+  uid: 'abc123def456',
+  kid: 'rBE7_zLOVYk4oYEdI-01qpXHWNMyZYD-4LEf6HiyZ9Q',
+  public_jwk: {
+    kty: 'OKP',
+    crv: 'Ed25519',
+    x: 'MYf21IkWEi6dXOtzUdbll3SMCaFiSFi4KgqktFZinCE',
+    kid: 'rBE7_zLOVYk4oYEdI-01qpXHWNMyZYD-4LEf6HiyZ9Q'
+  },
+  well_known_url: 'https://abc123.api.vestauth.com/.well-known/http-message-signatures-directory'
+}
+```
+
+## Custom Trust Pattern
+
+You can configure custom trusted domains using the `TOOL_FQDN_REGEX` environment variable:
+
+```bash
+# .env
+TOOL_FQDN_REGEX="^[a-z0-9-]+\\.mycompany\\.com$"
+```
+
+```javascript
+import { tool } from 'vestauth'
+
+// This will now trust agents from *.mycompany.com
+const result = await tool.verify('POST', uri, headers)
+```
+
+## Error Handling
+
+```javascript
+import { tool } from 'vestauth'
+
+try {
+  const result = await tool.verify('POST', uri, headers)
+  // Verified successfully
+} catch (error) {
+  switch (error.code) {
+    case 'MISSING_HTTP_METHOD':
+      console.error('HTTP method is required')
+      break
+    case 'MISSING_URI':
+      console.error('URI is required')
+      break
+    case 'MISSING_SIGNATURE_AGENT':
+      console.error('Signature-Agent header is missing')
+      break
+    case 'INVALID_SIGNATURE_AGENT':
+      console.error('Signature-Agent header is malformed')
+      break
+    case 'UNTRUSTED_SIGNATURE_AGENT':
+      console.error('Agent domain is not trusted')
+      break
+    case 'INVALID_SIGNATURE':
+      console.error('Signature verification failed')
+      break
+    default:
+      console.error('Verification error:', error.message)
+  }
+}
+```
+
+## Common Errors
+
+- **Missing HTTP Method**: `httpMethod` parameter is required
+- **Missing URI**: `uri` parameter is required
+- **Missing Signature-Agent**: The `Signature-Agent` header is not present in the request
+- **Invalid Signature-Agent**: The `Signature-Agent` header is malformed
+- **Untrusted Signature-Agent**: The agent's domain is not in the trusted list
+- **Invalid Signature**: The signature verification failed (wrong key or tampered request)
+- **Expired Signature**: The signature has expired (based on the `expires` parameter)
+
+## Verification Flow
+
+1. **Validate Headers**: Ensures `Signature-Agent` header is present and valid
+2. **Extract FQDN**: Parses the agent's domain from the `Signature-Agent` header
+3. **Trust Check**: Validates the domain against trusted patterns
+4. **Signature Verification**: Calls `primitives.verify()` to verify the cryptographic signature
+5. **Return Result**: Returns the verified agent information
+
+## Related Methods
+
+- [primitives.verify()](/api/primitives/verify) - Lower-level verification without FQDN trust check
+- [agent.headers()](/api/agent/headers) - Generate signature headers for outbound requests

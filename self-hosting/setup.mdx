@@ -1,0 +1,243 @@
+---
+title: 'Server Setup'
+description: 'Step-by-step guide to setting up your self-hosted Vestauth server'
+---
+
+## Installation
+
+First, install Vestauth globally using npm or the installation script:
+
+<CodeGroup>
+
+```bash npm
+npm install -g vestauth
+```
+
+```bash curl
+curl -sSf https://vestauth.sh | sh
+```
+
+```bash GitHub Releases
+curl -L -o vestauth.tar.gz "https://github.com/vestauth/vestauth/releases/latest/download/vestauth-$(uname -s)-$(uname -m).tar.gz"
+tar -xzf vestauth.tar.gz
+```
+
+</CodeGroup>
+
+## Setup Steps
+
+<Steps>
+  <Step title="Initialize Server Configuration">
+    Run `vestauth server init` to create your server's `.env` file with default configuration:
+
+    ```bash
+    vestauth server init
+    ```
+
+    Output:
+    ```
+    ✔ ready (.env/HOSTNAME=http://localhost:3000)
+    ⮕ next run: [vestauth server start]
+    ```
+
+    This creates a `.env` file with:
+    ```ini
+    PORT="3000"
+    HOSTNAME="http://localhost:3000"
+    DATABASE_URL="postgres://localhost/vestauth_production"
+    ```
+
+    <Note>
+    You can customize these values during initialization using flags:
+    ```bash
+    vestauth server init --port=3001 --hostname="https://vestauth.yoursite.com" --database-url="postgresql://USER:PASS@host:5432/db"
+    ```
+    </Note>
+  </Step>
+
+  <Step title="Create Database">
+    Create the `vestauth_production` PostgreSQL database:
+
+    ```bash
+    vestauth server db:create
+    ```
+
+    Output:
+    ```
+    Created database 'vestauth_production'
+    ```
+
+    <Note>
+    If the database already exists, you'll see:
+    ```
+    Database 'vestauth_production' already exists
+    ```
+    </Note>
+  </Step>
+
+  <Step title="Run Database Migrations">
+    Run migrations to create the required database schema:
+
+    ```bash
+    vestauth server db:migrate
+    ```
+
+    Output:
+    ```
+    == 20260223204000 CreateAgentsTable: migrating ================================================
+    == 20260223204000 CreateAgentsTable: migrated (0.0160s) ===========================
+    == 20260223205500 CreatePublicJwksTable: migrating ================================================
+    == 20260223205500 CreatePublicJwksTable: migrated (0.0100s) ===========================
+    ```
+
+    This creates two tables:
+    - `agents` - Stores agent identities
+    - `public_jwks` - Stores agent public keys
+  </Step>
+
+  <Step title="Start the Server">
+    Start your Vestauth server:
+
+    ```bash
+    vestauth server start
+    ```
+
+    Output:
+    ```
+    vestauth server listening on http://localhost:3000
+    ```
+
+    The server is now running and ready to accept agent registrations!
+  </Step>
+</Steps>
+
+## Verify Installation
+
+Test your server is running:
+
+```bash
+curl http://localhost:3000
+```
+
+Expected response:
+```json
+{
+  "service": "vestauth",
+  "status": "ok",
+  "version": "1.x.x"
+}
+```
+
+## Create Your First Agent
+
+Now that your server is running, create an agent that uses your self-hosted server:
+
+```bash
+mkdir your-agent
+cd your-agent
+vestauth agent init --hostname http://localhost:3000
+```
+
+Output:
+```
+✔ agent created (.env/AGENT_UID=agent-4b94ccd425e939fac5016b6b)
+```
+
+Test the agent authentication:
+
+```bash
+vestauth agent curl http://localhost:3000/whoami --pp
+```
+
+Expected response:
+```json
+{
+  "uid": "agent-4b94ccd425e939fac5016b6b",
+  "kid": "B0u80Gw28W9U2Jl5t_EBiWeBajO2104kOYZ9Ikucl5I",
+  "public_jwk": {
+    "crv": "Ed25519",
+    "x": "py2xNaAfjKZiau-jtmJls6h_3n8xJ1Ur0ie-n9b8zWg",
+    "kty": "OKP",
+    "kid": "B0u80Gw28W9U2Jl5t_EBiWeBajO2104kOYZ9Ikucl5I"
+  },
+  "well_known_url": "http://agent-4b94ccd425e939fac5016b6b.localhost:3000/.well-known/http-message-signatures-directory"
+}
+```
+
+## Production Deployment
+
+<Warning>
+**Important for production deployments:**
+
+1. **Use HTTPS**: Change `HOSTNAME` to use `https://` instead of `http://`
+2. **Configure wildcard DNS**: Set up `*.vestauth.yoursite.com` to point to your server
+3. **Use managed PostgreSQL**: Update `DATABASE_URL` to a production database like Supabase, AWS RDS, or similar
+4. **Set proper PORT**: Configure your reverse proxy (nginx, Caddy) to forward to your server port
+
+Example production `.env`:
+```ini
+PORT="3000"
+HOSTNAME="https://vestauth.yoursite.com"
+DATABASE_URL="postgresql://USER:PASS@aws-1-us-east-1.pooler.supabase.com:5432/postgres"
+```
+</Warning>
+
+## Command Reference
+
+### Server Commands
+
+```bash Server Start
+vestauth server start
+
+# With custom port
+vestauth server start --port 4567
+
+# With custom hostname
+vestauth server start --hostname https://vestauth.yoursite.com
+
+# With custom database
+vestauth server start --database-url postgresql://USER:PASS@host:5432/db
+```
+
+```bash Database Commands
+# Create database
+vestauth server db:create
+
+# Run migrations
+vestauth server db:migrate
+
+# Drop database (⚠️ destructive)
+vestauth server db:drop
+```
+
+## Troubleshooting
+
+### Database Connection Issues
+
+If you see database connection errors:
+
+1. Verify PostgreSQL is running: `pg_isready`
+2. Check DATABASE_URL format: `postgres://localhost/vestauth_production`
+3. Ensure database exists: `psql -l | grep vestauth_production`
+
+### Port Already in Use
+
+If port 3000 is already in use:
+
+```bash
+# Use a different port
+vestauth server start --port 3001
+```
+
+Or update `.env`:
+```ini
+PORT="3001"
+```
+
+### Agent Discovery Not Working
+
+If `.well-known` endpoints return 404:
+
+1. Ensure wildcard DNS is configured correctly
+2. Verify subdomain routing: `curl http://agent-test.localhost:3000/`
+3. Check server logs for routing issues

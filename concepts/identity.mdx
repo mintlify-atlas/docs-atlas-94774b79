@@ -1,0 +1,218 @@
+---
+title: "Identity"
+description: "Cryptographic identities for agents using Ed25519 keypairs"
+---
+
+## Overview
+
+Vestauth gives agents cryptographic identities built on Ed25519 public/private keypairs. Each agent has a unique identifier (UID) and a keypair that proves their identity without shared secrets.
+
+## Agent UID
+
+Every agent has a unique identifier following the format:
+
+```
+agent-{random_hex}
+```
+
+**Example:**
+```
+agent-4b94ccd425e939fac5016b6b
+```
+
+The UID is generated when you initialize an agent and remains constant even when you rotate keys.
+
+## Ed25519 Keypairs
+
+Vestauth uses Ed25519 for cryptographic signatures because it provides:
+
+- Strong modern cryptographic security
+- Fast signing and verification
+- Small key sizes
+- Wide ecosystem support
+
+### Key Structure
+
+Keys are stored in JSON Web Key (JWK) format with the following fields:
+
+**Public Key:**
+```json
+{
+  "crv": "Ed25519",
+  "x": "py2xNaAfjKZiau-jtmJls6h_3n8xJ1Ur0ie-n9b8zWg",
+  "kty": "OKP",
+  "kid": "B0u80Gw28W9U2Jl5t_EBiWeBajO2104kOYZ9Ikucl5I"
+}
+```
+
+**Private Key:**
+```json
+{
+  "crv": "Ed25519",
+  "d": "Z9vbwN-3eiFMVv_TPWXOxqSMJAT21kZvejWi72yiAaQ",
+  "x": "py2xNaAfjKZiau-jtmJls6h_3n8xJ1Ur0ie-n9b8zWg",
+  "kty": "OKP",
+  "kid": "B0u80Gw28W9U2Jl5t_EBiWeBajO2104kOYZ9Ikucl5I"
+}
+```
+
+<Info>
+The `kid` (key ID) is a thumbprint calculated from the public key and is used to identify which key signed a request.
+</Info>
+
+### Key Fields
+
+| Field | Description |
+|-------|-------------|
+| `crv` | Elliptic curve name (always "Ed25519") |
+| `kty` | Key type (always "OKP" for Octet Key Pair) |
+| `x` | Public key value (base64url encoded) |
+| `d` | Private key value (base64url encoded) - **never share** |
+| `kid` | Key identifier computed from public key thumbprint |
+
+## Storage
+
+Agent identities are stored in a `.env` file in your agent's directory:
+
+```ini
+AGENT_UID="agent-4b94ccd425e939fac5016b6b"
+AGENT_PUBLIC_JWK='{"crv":"Ed25519","x":"py2xNaAfjKZiau-jtmJls6h_3n8xJ1Ur0ie-n9b8zWg","kty":"OKP","kid":"B0u80Gw28W9U2Jl5t_EBiWeBajO2104kOYZ9Ikucl5I"}'
+AGENT_PRIVATE_JWK='{"crv":"Ed25519","d":"Z9vbwN-3eiFMVv_TPWXOxqSMJAT21kZvejWi72yiAaQ","x":"py2xNaAfjKZiau-jtmJls6h_3n8xJ1Ur0ie-n9b8zWg","kty":"OKP","kid":"B0u80Gw28W9U2Jl5t_EBiWeBajO2104kOYZ9Ikucl5I"}'
+```
+
+<Warning>
+**Never share your `AGENT_PRIVATE_JWK`**. This is the secret that proves your agent's identity. Anyone with access to this key can impersonate your agent.
+</Warning>
+
+## Creating an Identity
+
+Generate a new agent identity:
+
+```bash
+vestauth agent init
+```
+
+This command:
+1. Generates a new Ed25519 keypair
+2. Creates a unique agent UID
+3. Registers the agent with the Vestauth server
+4. Saves credentials to `.env`
+
+### Implementation
+
+Here's how Vestauth generates keypairs:
+
+```javascript src/lib/helpers/keypair.js
+const crypto = require('crypto')
+
+function keypair (existingPrivateJwk, prefix = 'agent') {
+  let publicJwk
+  let privateJwk
+
+  const {
+    publicKey,
+    privateKey
+  } = crypto.generateKeyPairSync('ed25519')
+
+  publicJwk = publicKey.export({ format: 'jwk' })
+  privateJwk = privateKey.export({ format: 'jwk' })
+
+  const kid = thumbprint(publicJwk)
+  publicJwk.kid = kid
+  privateJwk.kid = kid
+
+  return {
+    publicJwk,
+    privateJwk
+  }
+}
+```
+
+## Key Rotation
+
+Rotate your agent's keys while keeping the same UID:
+
+```bash
+vestauth agent rotate
+```
+
+This generates new keypairs and updates the public key registered with the Vestauth server. Old signatures remain valid until their expiration time.
+
+<Note>
+Key rotation is important for security hygiene. Rotate keys regularly or immediately if you suspect compromise.
+</Note>
+
+## Identity Verification
+
+Tools verify agent identities by:
+
+1. Extracting the agent UID from the `Signature-Agent` header
+2. Fetching the public key from the agent's `.well-known` endpoint
+3. Verifying the signature matches the request
+
+Here's how identity information is extracted:
+
+```javascript src/lib/helpers/identity.js
+const env = require('./env')
+
+function identity (raiseError = true) {
+  const publicJwk = env('AGENT_PUBLIC_JWK')
+  const privateJwk = env('AGENT_PRIVATE_JWK')
+  const uid = env('AGENT_UID') || env('AGENT_ID')
+
+  if (raiseError && uid && !(publicJwk || !privateJwk)) {
+    throw new Error('missing AGENT_PUBLIC_JWK, AGENT_PRIVATE_JWK, or AGENT_UID. Run [vestauth agent init]')
+  }
+
+  return {
+    uid,
+    publicJwk,
+    privateJwk
+  }
+}
+```
+
+## Public Key Discovery
+
+Each agent's public key is discoverable at:
+
+```
+https://{agent-uid}.{hostname}/.well-known/http-message-signatures-directory
+```
+
+**Example:**
+```
+https://agent-4b94ccd425e939fac5016b6b.api.vestauth.com/.well-known/http-message-signatures-directory
+```
+
+This endpoint returns a JWK Set containing the agent's public keys:
+
+```json
+{
+  "keys": [
+    {
+      "crv": "Ed25519",
+      "x": "py2xNaAfjKZiau-jtmJls6h_3n8xJ1Ur0ie-n9b8zWg",
+      "kty": "OKP",
+      "kid": "B0u80Gw28W9U2Jl5t_EBiWeBajO2104kOYZ9Ikucl5I"
+    }
+  ]
+}
+```
+
+<Info>
+Public key discovery enables tools to verify agents without manual key exchange or configuration.
+</Info>
+
+## Why Not API Keys?
+
+API keys are shared secrets that create several problems:
+
+| Issue | API Keys | Vestauth |
+|-------|----------|----------|
+| Leak risk | Anyone with the key can impersonate the client | Private key never leaves the agent |
+| Rotation | Difficult to rotate safely | Easy rotation with `vestauth agent rotate` |
+| Storage | Tools must store secrets securely | Tools only store public keys |
+| Attribution | Hard to prove which agent made a request | Cryptographically proven identity |
+
+Vestauth replaces shared secrets with public/private key cryptography, making authentication more secure and easier to manage.

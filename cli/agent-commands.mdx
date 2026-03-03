@@ -1,0 +1,295 @@
+---
+title: 'Agent Commands'
+description: 'Create agent identities and make authenticated requests'
+icon: 'robot'
+---
+
+## Overview
+
+Agent commands let you create cryptographic identities and use them to call authenticated tools.
+
+## agent init
+
+Create a new agent identity with a public/private keypair.
+
+```bash
+vestauth agent init
+```
+
+**Output:**
+```
+✔ agent created (.env/AGENT_UID=agent-609a4fd2ebf4e6347108c517)
+⮕ next run: [vestauth agent curl https://api.vestauth.com/whoami]
+```
+
+### Options
+
+<ParamField path="--hostname" type="string" default="api.vestauth.com">
+  Override the agent API hostname. Defaults to `AGENT_HOSTNAME` environment variable, then `api.vestauth.com`.
+  
+  When no scheme is provided, `https://` is assumed. For local non-TLS endpoints, pass `http://...` explicitly.
+</ParamField>
+
+### Examples
+
+<CodeGroup>
+```bash Default
+vestauth agent init
+```
+
+```bash Custom Hostname
+vestauth agent init --hostname https://vestauth.yoursite.com
+```
+
+```bash Local Development
+vestauth agent init --hostname http://localhost:3000
+```
+</CodeGroup>
+
+### Generated Files
+
+Creates a `.env` file with:
+
+```ini
+AGENT_UID="agent-4b94ccd425e939fac5016b6b"
+AGENT_PUBLIC_JWK='{"crv":"Ed25519","x":"py2xNaAfjKZiau-jtmJls6h_3n8xJ1Ur0ie-n9b8zWg","kty":"OKP","kid":"B0u80Gw28W9U2Jl5t_EBiWeBajO2104kOYZ9Ikucl5I"}'
+AGENT_PRIVATE_JWK='{"crv":"Ed25519","d":"Z9vbwN-3eiFMVv_TPWXOxqSMJAT21kZvejWi72yiAaQ","x":"py2xNaAfjKZiau-jtmJls6h_3n8xJ1Ur0ie-n9b8zWg","kty":"OKP","kid":"B0u80Gw28W9U2Jl5t_EBiWeBajO2104kOYZ9Ikucl5I"}'
+```
+
+<Warning>
+  Never share your `AGENT_PRIVATE_JWK`. This is used to sign requests and proves your identity.
+</Warning>
+
+---
+
+## agent curl
+
+Run curl as an authenticated agent. Automatically signs requests with your agent identity.
+
+```bash
+vestauth agent curl <url> [curl-options]
+```
+
+**Example:**
+```bash
+vestauth agent curl https://api.vestauth.com/whoami
+```
+
+**Output:**
+```json
+{"uid":"agent-609a4fd2ebf4e6347108c517", ...}
+```
+
+### Options
+
+<ParamField path="--tag" type="string" default="web-bot-auth">
+  Signature tag value. Standard value is `web-bot-auth`.
+</ParamField>
+
+<ParamField path="--nonce" type="string">
+  Custom nonce value. By default, a cryptographically random nonce is generated for each request.
+</ParamField>
+
+<ParamField path="--pp" type="boolean">
+  Pretty-print JSON output with indentation.
+  
+  Alias: `--pretty-print`
+</ParamField>
+
+### Examples
+
+<CodeGroup>
+```bash GET Request
+vestauth agent curl https://api.vestauth.com/whoami --pp
+```
+
+```bash POST Request
+vestauth agent curl https://sfs.vestauth.com/write -d '{"filepath":"/hello.md", "content":"hello"}'
+```
+
+```bash List Files
+vestauth agent curl https://sfs.vestauth.com/list
+```
+
+```bash Read File
+vestauth agent curl https://sfs.vestauth.com/read -d '{"filepath":"/hello.md"}'
+```
+
+```bash Delete File
+vestauth agent curl https://sfs.vestauth.com/delete -d '{"filepath":"/hello.md"}'
+```
+</CodeGroup>
+
+### How It Works
+
+`agent curl` wraps the standard `curl` command and automatically injects signed headers:
+
+- `Signature`: The cryptographic signature
+- `Signature-Input`: Signature metadata (created, expires, keyid, algorithm, nonce)
+- `Signature-Agent`: Agent identity and discovery URL
+- `Content-Type: application/json` (when not specified)
+- Request method defaults to `POST` (when not specified)
+
+All other curl options work normally.
+
+---
+
+## agent headers
+
+Generate signed headers for a request without making the request. Useful for debugging or integrating with other HTTP clients.
+
+```bash
+vestauth agent headers <httpMethod> <uri>
+```
+
+**Example:**
+```bash
+vestauth agent headers GET https://api.vestauth.com/whoami --pp
+```
+
+**Output:**
+```json
+{
+  "Signature": "sig1=:UW6A7j8jo+gQxd+EeVgDddY51ZOc9plrSaupW/N53hQnQFvP9BuwQHgL7SVPLQIu4cnRzLgvwm7Yu9YMO+HUDQ==:",
+  "Signature-Input": "sig1=(\"@authority\");created=1770396357;keyid=\"FGzgs758DBGnI1S0BejChDsK0IKZm3qPpOOXdRnnBkM\";alg=\"ed25519\";expires=1770396657;nonce=\"PrE7A6I_5fWnxBsBigNvxjp3-YangXl71V1uM3hPZavh918JqzjMSRcjHv_n5XIb3N8WivZEeigCBH6QGDSqgA\";tag=\"web-bot-auth\"",
+  "Signature-Agent": "sig1=agent-609a4fd2ebf4e6347108c517.api.vestauth.com"
+}
+```
+
+### Arguments
+
+<ParamField path="httpMethod" type="string" required>
+  HTTP method: `GET`, `POST`, `PUT`, `DELETE`, etc.
+</ParamField>
+
+<ParamField path="uri" type="string" required>
+  Full URI including scheme and authority (e.g., `https://api.vestauth.com/whoami`)
+</ParamField>
+
+### Options
+
+<ParamField path="--uid" type="string">
+  Override agent UID. Defaults to `AGENT_UID` or `AGENT_ID` environment variable.
+  
+  Alias: `--id`
+</ParamField>
+
+<ParamField path="--private-jwk" type="string">
+  Override private JWK for signing. Defaults to `AGENT_PRIVATE_JWK` environment variable.
+  
+  Must be a valid JSON Web Key in Ed25519 format.
+</ParamField>
+
+<ParamField path="--tag" type="string" default="web-bot-auth">
+  Signature tag value.
+</ParamField>
+
+<ParamField path="--nonce" type="string">
+  Custom nonce value. By default, a cryptographically random nonce is generated.
+</ParamField>
+
+<ParamField path="--pp" type="boolean">
+  Pretty-print JSON output.
+  
+  Alias: `--pretty-print`
+</ParamField>
+
+### Examples
+
+<CodeGroup>
+```bash Default
+vestauth agent headers GET https://api.vestauth.com/whoami --pp
+```
+
+```bash Custom UID
+vestauth agent headers GET https://api.vestauth.com/whoami --uid agent-1234 --pp
+```
+
+```bash Custom Private Key
+vestauth agent headers GET https://api.vestauth.com/whoami \
+  --private-jwk '{"crv":"Ed25519","d":"RyFk7QTOk_bMjFQKjyAR-vJDp7BITn9U0YBFNdpR9wE","x":"hyAxNMbuTcFQq420Dr46ucF0dRZ_FIyxgsujruEoklM","kty":"OKP","kid":"UfHTArlyLsqM8cB8sNfH2z6XOwc0RmJIq2CAPGfvMjk"}' \
+  --pp
+```
+</CodeGroup>
+
+---
+
+## agent rotate
+
+Rotate your agent's keypair. Generates new `AGENT_PRIVATE_JWK` and `AGENT_PUBLIC_JWK` while keeping the same `AGENT_UID`.
+
+```bash
+vestauth agent rotate
+```
+
+**Output:**
+```
+✔ agent keys rotated (.env/AGENT_UID=agent-8f1b347e2e58899f3147c05b)
+⮕ next run: [vestauth agent curl https://api.vestauth.com/whoami]
+```
+
+### Options
+
+<ParamField path="--uid" type="string">
+  Agent UID to rotate keys for. Defaults to `AGENT_UID` or `AGENT_ID` environment variable.
+  
+  Alias: `--id`
+</ParamField>
+
+<ParamField path="--private-jwk" type="string">
+  Current private JWK (used for signing the rotation request). Defaults to `AGENT_PRIVATE_JWK`.
+</ParamField>
+
+<ParamField path="--hostname" type="string">
+  Agent API hostname for rotation request.
+</ParamField>
+
+<ParamField path="--tag" type="string" default="web-bot-auth">
+  Signature tag value.
+</ParamField>
+
+<ParamField path="--nonce" type="string">
+  Custom nonce value.
+</ParamField>
+
+<ParamField path="--pp" type="boolean">
+  Pretty-print output.
+  
+  Alias: `--pretty-print`
+</ParamField>
+
+### Use Cases
+
+- **Security best practice**: Rotate keys regularly
+- **Key compromise**: Immediately rotate if private key is leaked
+- **Key migration**: Update to new cryptographic parameters
+
+### What Happens
+
+1. Generates new Ed25519 keypair
+2. Signs rotation request with current private key
+3. Updates `.env` file with new keys
+4. Keeps same `AGENT_UID`
+
+<Info>
+  Tools can cache public keys, so it may take time for the rotation to propagate. The old key should be considered invalid immediately.
+</Info>
+
+---
+
+## Environment Variables
+
+Agent commands read these environment variables from `.env`:
+
+| Variable | Description | Commands |
+|----------|-------------|----------|
+| `AGENT_UID` | Unique agent identifier | All agent commands |
+| `AGENT_ID` | Alias for `AGENT_UID` | All agent commands |
+| `AGENT_PUBLIC_JWK` | Public key (Ed25519 JWK) | `init`, `rotate` |
+| `AGENT_PRIVATE_JWK` | Private key (Ed25519 JWK) | `curl`, `headers`, `rotate` |
+| `AGENT_HOSTNAME` | Default agent API hostname | `init` |
+
+## Related
+
+- [Tool Commands](/cli/tool-commands) - Verify agent requests
+- [Primitives](/cli/primitives-commands) - Low-level signing operations

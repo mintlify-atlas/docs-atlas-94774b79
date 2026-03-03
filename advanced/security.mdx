@@ -1,0 +1,501 @@
+---
+title: 'Security Model'
+description: 'Understand Vestauth security architecture, replay attack prevention, and SSRF protection'
+icon: 'shield'
+---
+
+## Overview
+
+Vestauth's security model is built on cryptographic signatures, public key discovery, and defense-in-depth principles. This page explains how Vestauth protects against common attack vectors while maintaining simplicity and developer ergonomics.
+
+## Cryptographic Foundation
+
+Vestauth uses **Ed25519** elliptic curve cryptography for all signing operations:
+
+- **Algorithm:** EdDSA (Edwards-curve Digital Signature Algorithm)
+- **Curve:** Curve25519
+- **Key size:** 256 bits (32 bytes)
+- **Signature size:** 512 bits (64 bytes)
+
+### Why Ed25519?
+
+<Accordion title="Strong Security">
+  Ed25519 provides approximately **128 bits of security**, equivalent to 3072-bit RSA keys, but with much smaller key and signature sizes.
+</Accordion>
+
+<Accordion title="Performance">
+  Ed25519 is extremely fast:
+  - **Signing:** ~15,000 signatures/second on modern hardware
+  - **Verification:** ~40,000 verifications/second
+  
+  This makes it ideal for high-throughput agent systems.
+</Accordion>
+
+<Accordion title="No Parameter Choices">
+  Unlike RSA or ECDSA, Ed25519 has no parameter choices that could weaken security. There's only one secure way to use it.
+</Accordion>
+
+<Accordion title="Side-Channel Resistance">
+  Ed25519 is designed to be resistant to timing attacks and other side-channel vulnerabilities.
+</Accordion>
+
+## HTTP Message Signatures (RFC 9421)
+
+Vestauth implements [RFC 9421](https://datatracker.ietf.org/doc/rfc9421/) for signing HTTP requests.
+
+### Signature Components
+
+Each signed request includes three headers:
+
+**1. Signature**
+
+The base64-encoded cryptographic signature:
+
+```
+Signature: sig1=:d4Id5SXhUExsf1XyruD8eBmlDtWzt/vezoCS+SKf0M8CxSkhKBtdHH7KkYyMN6E0hmxmNHsYus11u32nhvpWBQ==:
+```
+
+**2. Signature-Input**
+
+Parameters used to generate the signature:
+
+```
+Signature-Input: sig1=("@authority");created=1770247189;keyid="B0u80Gw28W9U2Jl5t_EBiWeBajO2104kOYZ9Ikucl5I";alg="ed25519";expires=1770247489;nonce="NURxn28X7zyKJ9k5bHxuOyO5qdvF9L5s2qHmhTrGUzbwGSIoUCHmwSlwiiCRgTDGuum83yyWMHJU4jmrVI_XPg";tag="web-bot-auth"
+```
+
+Key parameters:
+- `created` - Unix timestamp when signature was created
+- `expires` - Unix timestamp when signature expires (typically 5 minutes)
+- `nonce` - Unique 64-byte random value
+- `keyid` - Public key identifier (JWK thumbprint)
+- `alg` - Signature algorithm (`ed25519`)
+- `tag` - Implementation tag (`web-bot-auth`)
+
+**3. Signature-Agent**
+
+Agent identity and discovery endpoint:
+
+```
+Signature-Agent: sig1=agent-4b94ccd425e939fac5016b6b.api.vestauth.com
+```
+
+### What Gets Signed?
+
+Vestauth signs the HTTP `@authority` component (host + port):
+
+```js
+function authorityMessage (uri, signatureParams) {
+  const url = new URL(uri)
+  const authority = url.port ? `${url.hostname}:${url.port}` : url.hostname
+  
+  return `"@authority": ${authority}\n${signatureParams}`
+}
+```
+
+This prevents:
+- **Host header attacks** - Signature is bound to the destination hostname
+- **Port confusion** - Different ports produce different signatures
+- **Man-in-the-middle** - Attacker can't redirect to different hosts
+
+<Note>
+  **Future expansion**
+  
+  Vestauth currently signs `@authority` only. Future versions may support signing additional components like request body, specific headers, or query parameters for enhanced security.
+</Note>
+
+## Replay Attack Prevention
+
+Vestauth prevents replay attacks using **three complementary mechanisms**:
+
+### 1. Expiration Timestamps
+
+Every signature includes an `expires` parameter:
+
+```js
+const values = parseSignatureInputHeader(signatureInput)
+const { expires } = values
+
+if (expires && expires < (Math.floor(Date.now() / 1000))) {
+  throw new Errors().expiredSignature()
+}
+```
+
+**Default expiration:** 5 minutes (300 seconds)
+
+This limits the window during which a captured request could be replayed.
+
+### 2. Creation Timestamps
+
+The `created` parameter prevents backdating attacks:
+
+```
+created=1770247189
+```
+
+Tools can reject signatures that are too old, even if not yet expired.
+
+### 3. Unique Nonces
+
+Each request includes a cryptographically random 64-byte nonce:
+
+```
+nonce="NURxn28X7zyKJ9k5bHxuOyO5qdvF9L5s2qHmhTrGUzbwGSIoUCHmwSlwiiCRgTDGuum83yyWMHJU4jmrVI_XPg"
+```
+
+**Nonce Properties:**
+- **Uniqueness:** 64 bytes of randomness = 2^512 possible values
+- **One-time use:** Each nonce should only be accepted once
+- **Collision resistance:** Probability of collision is effectively zero
+
+### Nonce Tracking (Optional)
+
+Tools can optionally track used nonces to provide absolute replay protection:
+
+```js
+const usedNonces = new Set()
+
+app.post('/endpoint', async (req, res) => {
+  const agent = await vestauth.tool.verify(req.method, url, req.headers)
+  
+  // Extract nonce from Signature-Input
+  const values = parseSignatureInputHeader(req.headers['signature-input'])
+  const nonce = values.nonce
+  
+  // Check if nonce was already used
+  if (usedNonces.has(nonce)) {
+    return res.status(401).json({ error: 'Replay attack detected' })
+  }
+  
+  // Mark nonce as used
+  usedNonces.add(nonce)
+  
+  // Process request...
+})
+```
+
+<Warning>
+  **Nonce storage considerations**
+  
+  If implementing nonce tracking:
+  - Store nonces in a distributed cache (Redis, Memcached)
+  - Expire nonces after signature expiration time
+  - Consider storage costs for high-volume tools
+  
+  For most use cases, timestamp validation alone provides sufficient protection.
+</Warning>
+
+## SSRF Protection
+
+Server-Side Request Forgery (SSRF) is a critical vulnerability during public key discovery. Vestauth prevents SSRF through **domain allowlisting**.
+
+### Default Trusted Domains
+
+By default, Vestauth only fetches public keys from:
+
+```js
+const TRUSTED_FQDN_REGEX = /^[A-Za-z0-9-]+\.(?:agents|api)\.vestauth\.com$/
+```
+
+**Allowed:**
+- `agent-abc123.api.vestauth.com` ✅
+- `agent-xyz789.agents.vestauth.com` ✅
+
+**Blocked:**
+- `localhost` ❌
+- `192.168.1.1` ❌
+- `internal.company.local` ❌
+- `attacker.com` ❌
+
+### Trusted Domain Verification
+
+The `trustedFqdn()` function enforces this policy:
+
+```js
+function trustedFqdn (fqdn, serverHostname = null) {
+  fqdn = fqdn.toLowerCase()
+
+  // 1. Check default Vestauth domains
+  if (TRUSTED_FQDN_REGEX.test(fqdn)) return true
+
+  // 2. Check self-hosted server domain
+  if (serverHostname) {
+    const { host } = extractHostAndHostname(serverHostname)
+    const HOSTNAME_REGEX = new RegExp(`^[A-Za-z0-9-]+.${escapeRegex(host)}$`)
+    if (HOSTNAME_REGEX.test(fqdn)) return true
+  }
+
+  // 3. Check custom trusted domains
+  const override = process.env.TOOL_FQDN_REGEX
+  if (override) {
+    const OVERRIDE_REGEX = new RegExp(`${escapeRegex(override)}`)
+    if (OVERRIDE_REGEX.test(fqdn)) return true
+  }
+
+  return false
+}
+```
+
+### Custom Trusted Domains
+
+For self-hosted or federated deployments, configure additional trusted domains:
+
+```ini
+# .env
+TOOL_FQDN_REGEX=".*\.agents\.vestauth\.com|.*\.agents\.example\.internal"
+```
+
+**Example allowed domains:**
+- `agent-123.agents.vestauth.com` ✅
+- `agent-456.agents.example.internal` ✅
+- `agent-789.agents.evil.com` ❌ (not in allowlist)
+
+<Warning>
+  **Be careful with custom domains**
+  
+  Only add domains you control. Never use overly permissive patterns like `.*` which would disable SSRF protection entirely.
+  
+  **Bad pattern:** `TOOL_FQDN_REGEX=".*"` ❌
+  
+  **Good pattern:** `TOOL_FQDN_REGEX=".*\.company\.com"` ✅
+</Warning>
+
+## Public Key Discovery
+
+Vestauth uses `.well-known` URLs for public key discovery:
+
+```
+https://agent-{uid}.api.vestauth.com/.well-known/http-message-signatures-directory
+```
+
+### Discovery Flow
+
+<Steps>
+  <Step title="Extract agent identity">
+    Parse the `Signature-Agent` header:
+    
+    ```
+    Signature-Agent: sig1=agent-4b94ccd425e939fac5016b6b.api.vestauth.com
+    ```
+    
+    Extract: `agent-4b94ccd425e939fac5016b6b.api.vestauth.com`
+  </Step>
+
+  <Step title="Verify trusted domain">
+    Check that the domain matches `TRUSTED_FQDN_REGEX`:
+    
+    ```js
+    if (!trustedFqdn(fqdn, serverHostname)) {
+      throw new Errors().untrustedSignatureAgent()
+    }
+    ```
+  </Step>
+
+  <Step title="Construct discovery URL">
+    Build the `.well-known` URL:
+    
+    ```
+    https://agent-4b94ccd425e939fac5016b6b.api.vestauth.com/.well-known/http-message-signatures-directory
+    ```
+  </Step>
+
+  <Step title="Fetch public keys">
+    Make HTTPS request to discovery endpoint:
+    
+    ```js
+    const resp = await http(wellKnownUrl, { method: 'GET' })
+    const json = await resp.body.json()
+    ```
+  </Step>
+
+  <Step title="Select matching key">
+    Find key matching `keyid` from `Signature-Input`:
+    
+    ```js
+    const publicJwk = json.keys.find((key) => key.kid === kid)
+    ```
+  </Step>
+</Steps>
+
+### Why Not Embed Keys?
+
+Vestauth uses discovery instead of embedding public keys in requests for several reasons:
+
+<Accordion title="Smaller Requests">
+  Public keys are 32+ bytes. Discovery keeps request headers small and allows caching.
+</Accordion>
+
+<Accordion title="Key Rotation">
+  Agents can rotate keys without changing how they sign requests. Tools simply fetch updated keys from the discovery endpoint.
+</Accordion>
+
+<Accordion title="Multi-Key Support">
+  Discovery endpoints can publish multiple active keys during rotation periods:
+  
+  ```json
+  {
+    "keys": [
+      { "kid": "new_key", ... },
+      { "kid": "old_key", ... }
+    ]
+  }
+  ```
+</Accordion>
+
+<Accordion title="Standards Alignment">
+  `.well-known` discovery is used by OAuth, OpenID Connect, and other web identity systems.
+</Accordion>
+
+## Defense in Depth
+
+Vestauth employs multiple security layers:
+
+| Layer | Protection |
+|-------|------------|
+| **Cryptographic signatures** | Prevents impersonation and tampering |
+| **Ed25519 keys** | Strong modern cryptography |
+| **Timestamp validation** | Limits replay window to 5 minutes |
+| **Unique nonces** | Prevents exact replay attacks |
+| **Domain allowlisting** | Blocks SSRF during key discovery |
+| **HTTPS enforcement** | Protects request/response confidentiality |
+| **Key rotation** | Limits exposure from key compromise |
+| **Public key discovery** | Enables key updates without protocol changes |
+
+## Threat Model
+
+### What Vestauth Protects Against
+
+✅ **Impersonation attacks** - Only the private key owner can create valid signatures
+
+✅ **Man-in-the-middle** - Signatures are bound to the destination hostname
+
+✅ **Replay attacks** - Timestamps and nonces prevent reuse
+
+✅ **SSRF attacks** - Domain allowlisting prevents malicious key fetches
+
+✅ **API key leaks** - No shared secrets to leak
+
+✅ **Credential stuffing** - No passwords to guess or brute force
+
+### What Vestauth Does NOT Protect Against
+
+⚠️ **Private key compromise** - If an attacker obtains `AGENT_PRIVATE_JWK`, they can impersonate the agent until keys are rotated
+
+⚠️ **Eavesdropping** - Use HTTPS to protect request/response content
+
+⚠️ **DDoS attacks** - Signature verification requires CPU; rate limiting is recommended
+
+⚠️ **Compromised discovery endpoint** - If an attacker controls the `.well-known` URL, they could serve malicious keys (mitigated by domain allowlisting)
+
+<Note>
+  **Private key security is critical**
+  
+  Vestauth's security depends on keeping `AGENT_PRIVATE_JWK` secret:
+  
+  - Never commit to version control
+  - Never log or display in plaintext
+  - Never send over unencrypted channels
+  - Rotate immediately if exposed
+  - Store in encrypted secret management systems
+</Note>
+
+## Security Best Practices
+
+### For Tool Developers
+
+<Steps>
+  <Step title="Always use HTTPS in production">
+    ```js
+    if (process.env.NODE_ENV === 'production' && !url.startsWith('https://')) {
+      throw new Error('HTTPS required in production')
+    }
+    ```
+  </Step>
+
+  <Step title="Implement rate limiting">
+    Prevent abuse from compromised agents:
+    
+    ```js
+    const rateLimit = require('express-rate-limit')
+    
+    app.use(rateLimit({
+      windowMs: 60 * 1000, // 1 minute
+      max: 100, // 100 requests per minute
+      keyGenerator: (req) => req.agent?.uid || req.ip
+    }))
+    ```
+  </Step>
+
+  <Step title="Cache public keys">
+    Reduce latency and protect against discovery endpoint outages:
+    
+    ```js
+    const cache = new Map()
+    const CACHE_TTL = 3600 // 1 hour
+    ```
+  </Step>
+
+  <Step title="Log verification failures">
+    Monitor for attack attempts:
+    
+    ```js
+    catch (err) {
+      logger.warn('Signature verification failed', {
+        error: err.message,
+        ip: req.ip,
+        path: req.path
+      })
+      res.status(401).json({ error: err.message })
+    }
+    ```
+  </Step>
+
+  <Step title="Consider nonce tracking">
+    For high-security tools, implement nonce deduplication.
+  </Step>
+</Steps>
+
+### For Agent Operators
+
+<Steps>
+  <Step title="Protect private keys">
+    - Use `.env` files (never commit)
+    - Use encrypted secret storage
+    - Restrict file permissions: `chmod 600 .env`
+  </Step>
+
+  <Step title="Rotate keys regularly">
+    ```sh
+    # Every 90 days
+    vestauth agent rotate
+    ```
+  </Step>
+
+  <Step title="Monitor agent activity">
+    Review tool audit logs for unexpected usage.
+  </Step>
+
+  <Step title="Use separate agents for different purposes">
+    Don't share agent identities across projects or environments.
+  </Step>
+</Steps>
+
+## Security Audits
+
+Vestauth follows these standards:
+
+- [RFC 9421](https://datatracker.ietf.org/doc/rfc9421/) - HTTP Message Signatures
+- [Web-Bot-Auth Draft](https://datatracker.ietf.org/doc/html/draft-meunier-web-bot-auth-architecture) - Agent Authentication Architecture
+- [RFC 8032](https://datatracker.ietf.org/doc/html/rfc8032) - Ed25519 Signatures
+
+For security issues, please report to the Vestauth security team.
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Building Tools" icon="wrench" href="/advanced/building-tools">
+    Implement secure tool authentication
+  </Card>
+  <Card title="Key Rotation" icon="rotate" href="/advanced/key-rotation">
+    Learn rotation best practices
+  </Card>
+</CardGroup>

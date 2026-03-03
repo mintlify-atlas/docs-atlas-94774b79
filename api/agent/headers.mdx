@@ -1,0 +1,168 @@
+---
+title: agent.headers()
+description: Generates RFC 9421 request signature headers for authenticated HTTP requests
+---
+
+## Overview
+
+The `agent.headers()` method generates HTTP Signature headers (RFC 9421) for authenticating outbound requests. It automatically reads credentials from `.env` if not provided.
+
+## Signature
+
+```typescript
+agent.headers(
+  httpMethod: HttpMethod,
+  uri: string,
+  uid?: string | null,
+  privateJwk?: string | null,
+  tag?: string,
+  nonce?: string | null
+): Promise<SignatureHeaders>
+```
+
+## Parameters
+
+<ParamField path="httpMethod" type="HttpMethod" required>
+  The HTTP method for the request being signed.
+  
+  Valid values: `'GET'`, `'POST'`, `'PUT'`, `'PATCH'`, `'DELETE'`, `'OPTIONS'`, `'HEAD'`, or any custom string.
+</ParamField>
+
+<ParamField path="uri" type="string" required>
+  The full URI of the request being signed (e.g., `https://api.example.com/users`).
+</ParamField>
+
+<ParamField path="uid" type="string | null" default="from .env">
+  The agent's unique identifier. If not provided, reads `AGENT_UID` from `.env`.
+</ParamField>
+
+<ParamField path="privateJwk" type="string | null" default="from .env">
+  The agent's private JWK as a JSON string. If not provided, reads `AGENT_PRIVATE_JWK` from `.env`.
+</ParamField>
+
+<ParamField path="tag" type="string" default="web-bot-auth">
+  The signature tag to use in the `Signature-Input` header.
+</ParamField>
+
+<ParamField path="nonce" type="string | null" default="null">
+  An optional nonce value to include in the signature for additional security.
+</ParamField>
+
+## Return Value
+
+Returns a Promise that resolves to a `SignatureHeaders` object:
+
+<ResponseField name="Signature" type="string" required>
+  The RFC 9421 signature value in the format `sig1=:base64_signature:`.
+</ResponseField>
+
+<ResponseField name="Signature-Input" type="string" required>
+  The signature input parameters including `keyid`, `tag`, `created`, and optionally `nonce`.
+  
+  Example: `sig1=("@method" "@authority");keyid="...";tag="web-bot-auth";created=1234567890`
+</ResponseField>
+
+<ResponseField name="Signature-Agent" type="string" required>
+  The agent discovery URL in the format `sig1="https://uid.api.vestauth.com"`.
+</ResponseField>
+
+## Example
+
+```javascript
+import { agent } from 'vestauth'
+
+// Generate headers for a GET request (reads from .env)
+const headers = await agent.headers('GET', 'https://api.example.com/users')
+
+// Make the authenticated request
+const response = await fetch('https://api.example.com/users', {
+  method: 'GET',
+  headers: {
+    ...headers,
+    'Content-Type': 'application/json'
+  }
+})
+```
+
+## Example with Custom Credentials
+
+```javascript
+import { agent } from 'vestauth'
+
+// Use custom credentials instead of .env
+const uid = 'my-custom-uid'
+const privateJwk = JSON.stringify({
+  kty: 'OKP',
+  crv: 'Ed25519',
+  x: 'MYf21IkWEi6dXOtzUdbll3SMCaFiSFi4KgqktFZinCE',
+  d: 'eScKeQcawvvRiBuA_-gWaAP7PZ3UUGPqJv7jks5tFVI',
+  kid: 'rBE7_zLOVYk4oYEdI-01qpXHWNMyZYD-4LEf6HiyZ9Q'
+})
+
+const headers = await agent.headers(
+  'POST',
+  'https://api.example.com/data',
+  uid,
+  privateJwk
+)
+
+console.log(headers)
+```
+
+## Example Output
+
+```javascript
+{
+  'Signature': 'sig1=:K2qGT5srn2OGbOIDzQ6kYT+ruaycnDAAUpKv+ePFfD0=:',
+  'Signature-Input': 'sig1=("@method" "@authority");keyid="rBE7_zLOVYk4oYEdI-01qpXHWNMyZYD-4LEf6HiyZ9Q";tag="web-bot-auth";created=1709481600',
+  'Signature-Agent': 'sig1="https://abc123.api.vestauth.com"'
+}
+```
+
+## Example with Nonce
+
+```javascript
+import { agent } from 'vestauth'
+import crypto from 'crypto'
+
+// Generate a random nonce
+const nonce = crypto.randomBytes(16).toString('hex')
+
+const headers = await agent.headers(
+  'POST',
+  'https://api.example.com/secure',
+  null,  // use .env uid
+  null,  // use .env privateJwk
+  'web-bot-auth',
+  nonce
+)
+```
+
+## Error Handling
+
+```javascript
+import { agent } from 'vestauth'
+
+try {
+  const headers = await agent.headers('GET', 'https://api.example.com/users')
+  // Use headers...
+} catch (error) {
+  if (error.message.includes('missing uid')) {
+    console.error('Agent not initialized - run agent.init() first')
+  } else {
+    console.error('Failed to generate headers:', error.message)
+  }
+}
+```
+
+## Common Errors
+
+- **Missing UID**: Thrown when `uid` is not provided and `AGENT_UID` is not in `.env`
+- **Missing Private JWK**: Thrown when `privateJwk` is not provided and `AGENT_PRIVATE_JWK` is not in `.env`
+- **Invalid Private JWK**: Thrown when the provided `privateJwk` is not valid JSON or not a proper JWK
+
+## Related Methods
+
+- [agent.init()](/api/agent/init) - Initialize agent credentials
+- [primitives.headers()](/api/primitives/headers) - Lower-level header generation without .env
+- [tool.verify()](/api/tool/verify) - Verify incoming signed requests

@@ -1,0 +1,414 @@
+---
+title: 'Server Commands'
+description: 'Self-host your own Vestauth infrastructure'
+icon: 'server'
+---
+
+## Overview
+
+Server commands let you run your own Vestauth server with full control over your agent identity infrastructure.
+
+<Info>
+  Self-hosting is optional. You can use `api.vestauth.com` without running your own server.
+</Info>
+
+## Prerequisites
+
+- PostgreSQL database
+- Node.js 18+ or standalone binary
+
+## Quick Start
+
+```bash
+# Initialize server configuration
+vestauth server init
+
+# Create database
+vestauth server db:create
+
+# Run migrations
+vestauth server db:migrate
+
+# Start server
+vestauth server start
+```
+
+---
+
+## server init
+
+Create or update the server `.env` configuration file.
+
+```bash
+vestauth server init
+```
+
+**Output:**
+```
+✔ ready (.env/HOSTNAME=http://localhost:3000)
+⮕ next run: [vestauth server start]
+```
+
+### Options
+
+<ParamField path="--port" type="string" default="3000">
+  Server port. Defaults to `PORT` environment variable, then `3000`.
+</ParamField>
+
+<ParamField path="--hostname" type="string" default="http://localhost:3000">
+  Server hostname (including scheme). Defaults to `HOSTNAME` environment variable, then `http://localhost:3000`.
+  
+  In production, use your public domain (e.g., `https://vestauth.yoursite.com`).
+</ParamField>
+
+<ParamField path="--database-url" type="string" default="postgres://localhost/vestauth_production">
+  PostgreSQL connection string. Defaults to `DATABASE_URL` environment variable.
+  
+  Format: `postgresql://USER:PASS@HOST:PORT/DATABASE`
+</ParamField>
+
+### Examples
+
+<CodeGroup>
+```bash Default (Local)
+vestauth server init
+```
+
+```bash Custom Port
+vestauth server init --port 4567
+```
+
+```bash Production
+vestauth server init \
+  --hostname https://vestauth.yoursite.com \
+  --database-url postgresql://user:pass@db.example.com:5432/vestauth
+```
+</CodeGroup>
+
+### Generated Configuration
+
+Creates a `.env` file:
+
+```ini
+PORT="3000"
+HOSTNAME="http://localhost:3000"
+DATABASE_URL="postgres://localhost/vestauth_production"
+```
+
+<Warning>
+  **Production note:** Configure a wildcard DNS record for `*.${HOSTNAME}`.
+  
+  Example: if `HOSTNAME=vestauth.yourapp.com`, add `*.vestauth.yourapp.com`.
+  
+  Required for `.well-known` discovery per the [web-bot-auth](https://datatracker.ietf.org/doc/html/draft-meunier-web-bot-auth-architecture) spec.
+</Warning>
+
+---
+
+## server start
+
+Start the Vestauth server.
+
+```bash
+vestauth server start
+```
+
+**Output:**
+```
+vestauth server listening on http://localhost:3000
+```
+
+### Options
+
+<ParamField path="--port" type="string">
+  Override server port. Defaults to `PORT` from `.env`.
+</ParamField>
+
+<ParamField path="--hostname" type="string">
+  Override server hostname. Defaults to `HOSTNAME` from `.env`.
+</ParamField>
+
+<ParamField path="--database-url" type="string" default="postgres://localhost/vestauth_production">
+  Override database connection string. Defaults to `DATABASE_URL` from `.env`.
+</ParamField>
+
+### Examples
+
+<CodeGroup>
+```bash Default
+vestauth server start
+```
+
+```bash Custom Port
+vestauth server start --port 4567
+```
+
+```bash Production
+vestauth server start \
+  --hostname https://vestauth.yoursite.com \
+  --database-url postgresql://user:pass@db.example.com:5432/vestauth
+```
+</CodeGroup>
+
+### Server Endpoints
+
+The server provides these endpoints:
+
+| Endpoint | Purpose |
+|----------|----------|
+| `POST /agents` | Register new agent |
+| `PUT /agents/:uid/keys` | Rotate agent keys |
+| `GET /:uid.{hostname}/.well-known/http-message-signatures-directory` | Public key discovery |
+| `/whoami` | Verify agent identity |
+
+### Production Deployment
+
+For production:
+
+1. Use a managed PostgreSQL database
+2. Set `HOSTNAME` to your public domain
+3. Configure wildcard DNS (`*.vestauth.yoursite.com`)
+4. Use a process manager (PM2, systemd, etc.)
+5. Enable HTTPS via reverse proxy (nginx, Caddy)
+
+<CodeGroup>
+```bash PM2
+pm2 start vestauth -- server start
+pm2 save
+pm2 startup
+```
+
+```bash systemd
+# /etc/systemd/system/vestauth.service
+[Unit]
+Description=Vestauth Server
+After=network.target
+
+[Service]
+Type=simple
+User=vestauth
+WorkingDirectory=/opt/vestauth
+ExecStart=/usr/local/bin/vestauth server start
+Restart=always
+
+[Install]
+WantedBy=multi-user.target
+```
+
+```bash Docker
+FROM node:18-alpine
+WORKDIR /app
+RUN npm install -g vestauth
+COPY .env .env
+CMD ["vestauth", "server", "start"]
+```
+</CodeGroup>
+
+---
+
+## server db:create
+
+Create the `vestauth_production` PostgreSQL database.
+
+```bash
+vestauth server db:create
+```
+
+**Output:**
+```
+Created database 'vestauth_production'
+```
+
+### Options
+
+<ParamField path="--database-url" type="string" default="postgres://localhost/vestauth_production">
+  PostgreSQL connection string. Defaults to `DATABASE_URL` from `.env`.
+</ParamField>
+
+### Examples
+
+<CodeGroup>
+```bash Default
+vestauth server db:create
+```
+
+```bash Custom Database
+vestauth server db:create --database-url postgresql://user:pass@db.example.com:5432/vestauth
+```
+</CodeGroup>
+
+<Note>
+  Requires PostgreSQL to be running and the user to have `CREATEDB` privileges.
+</Note>
+
+---
+
+## server db:migrate
+
+Run database migrations to create the required schema.
+
+```bash
+vestauth server db:migrate
+```
+
+**Output:**
+```
+== 20260223204000 CreateAgentsTable: migrating ================================================
+== 20260223204000 CreateAgentsTable: migrated (0.0160s) ===========================
+== 20260223205500 CreatePublicJwksTable: migrating ================================================
+== 20260223205500 CreatePublicJwksTable: migrated (0.0100s) ===========================
+```
+
+### Options
+
+<ParamField path="--database-url" type="string" default="postgres://localhost/vestauth_production">
+  PostgreSQL connection string. Defaults to `DATABASE_URL` from `.env`.
+</ParamField>
+
+### Database Schema
+
+Creates these tables:
+
+**agents**
+- `uid` - Unique agent identifier
+- `created_at` - Agent creation timestamp
+- `updated_at` - Last update timestamp
+
+**public_jwks**
+- `kid` - Key ID
+- `agent_uid` - Associated agent UID
+- `jwk` - Public key (JSON Web Key)
+- `created_at` - Key creation timestamp
+- `revoked_at` - Key revocation timestamp (if revoked)
+
+### Running Migrations
+
+<CodeGroup>
+```bash Initial Setup
+vestauth server db:migrate
+```
+
+```bash After Updates
+# Pull latest code
+git pull
+
+# Run new migrations
+vestauth server db:migrate
+```
+</CodeGroup>
+
+<Info>
+  Migrations are idempotent. Running them multiple times is safe.
+</Info>
+
+---
+
+## server db:drop
+
+Delete the `vestauth_production` database.
+
+```bash
+vestauth server db:drop
+```
+
+**Output:**
+```
+Dropped database 'vestauth_production'
+```
+
+### Options
+
+<ParamField path="--database-url" type="string" default="postgres://localhost/vestauth_production">
+  PostgreSQL connection string. Defaults to `DATABASE_URL` from `.env`.
+</ParamField>
+
+<Warning>
+  This permanently deletes all agent data. Use with caution.
+  
+  In production, use database backups instead of dropping the database.
+</Warning>
+
+### When to Use
+
+- Development: Reset local database
+- Testing: Clean slate between test runs
+- Migration testing: Verify migrations work on fresh database
+
+**Never use in production.**
+
+---
+
+## Environment Variables
+
+Server commands read these from `.env`:
+
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `PORT` | Server port | `3000` |
+| `HOSTNAME` | Server hostname with scheme | `http://localhost:3000` |
+| `DATABASE_URL` | PostgreSQL connection string | `postgres://localhost/vestauth_production` |
+
+## Complete Setup Example
+
+Here's a full self-hosting workflow:
+
+```bash
+# 1. Install Vestauth
+curl -sfS https://vestauth.sh | sh
+
+# 2. Initialize server
+vestauth server init \
+  --hostname https://vestauth.yoursite.com \
+  --database-url postgresql://user:pass@db.example.com:5432/vestauth
+
+# 3. Create database
+vestauth server db:create
+
+# 4. Run migrations
+vestauth server db:migrate
+
+# 5. Start server
+vestauth server start
+```
+
+Then create agents pointing to your server:
+
+```bash
+vestauth agent init --hostname https://vestauth.yoursite.com
+```
+
+## Troubleshooting
+
+### Database Connection Failed
+
+```bash
+# Test connection
+psql "$DATABASE_URL"
+
+# Check PostgreSQL is running
+pg_isready
+```
+
+### Port Already in Use
+
+```bash
+# Use different port
+vestauth server start --port 3001
+
+# Or kill process using port 3000
+lsof -ti:3000 | xargs kill
+```
+
+### Migrations Failed
+
+```bash
+# Drop and recreate
+vestauth server db:drop
+vestauth server db:create
+vestauth server db:migrate
+```
+
+## Related
+
+- [Agent Commands](/cli/agent-commands) - Create agents using your server
+- [Development Guide](/development) - Contributing to Vestauth

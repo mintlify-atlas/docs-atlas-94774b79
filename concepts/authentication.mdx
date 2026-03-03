@@ -1,0 +1,322 @@
+---
+title: "Authentication"
+description: "HTTP message signatures using RFC 9421 for cryptographic request verification"
+---
+
+## Overview
+
+Vestauth authenticates HTTP requests using cryptographic signatures based on [RFC 9421](https://datatracker.ietf.org/doc/rfc9421/). Each request is signed with the agent's private key, and tools verify the signature using the agent's public key.
+
+This approach eliminates shared secrets while providing strong cryptographic proof of identity.
+
+## How It Works
+
+Authentication follows these steps:
+
+1. **Agent signs request** - Uses private key to create a signature over request components
+2. **Agent sends request** - Includes signature headers with the HTTP request
+3. **Tool receives request** - Extracts signature headers
+4. **Tool fetches public key** - Retrieves agent's public key from discovery endpoint
+5. **Tool verifies signature** - Validates the signature matches the request
+
+<Info>
+Signatures are computed over specific request components like the authority (domain) and signature parameters, ensuring integrity of the entire request.
+</Info>
+
+## Signature Headers
+
+Vestauth adds three headers to authenticate requests:
+
+### Signature
+
+Contains the base64-encoded cryptographic signature:
+
+```
+Signature: sig1=:d4Id5SXhUExsf1XyruD8eBmlDtWzt/vezoCS+SKf0M8CxSkhKBtdHH7KkYyMN6E0hmxmNHsYus11u32nhvpWBQ==:
+```
+
+### Signature-Input
+
+Describes what was signed and metadata about the signature:
+
+```
+Signature-Input: sig1=("@authority");created=1770247189;keyid="B0u80Gw28W9U2Jl5t_EBiWeBajO2104kOYZ9Ikucl5I";alg="ed25519";expires=1770247489;nonce="NURxn28X7zyKJ9k5bHxuOyO5qdvF9L5s2qHmhTrGUzbwGSIoUCHmwSlwiiCRgTDGuum83yyWMHJU4jmrVI_XPg";tag="web-bot-auth"
+```
+
+**Parameters:**
+
+| Parameter | Description |
+|-----------|-------------|
+| `("@authority")` | Signed component - the request's host/domain |
+| `created` | Unix timestamp when signature was created |
+| `keyid` | Key ID (thumbprint) used to sign |
+| `alg` | Algorithm (always "ed25519") |
+| `expires` | Unix timestamp when signature expires |
+| `nonce` | Unique random value to prevent replay attacks |
+| `tag` | Set to "web-bot-auth" for agent requests |
+
+### Signature-Agent
+
+Identifies the agent and where to find its public key:
+
+```
+Signature-Agent: sig1=agent-4b94ccd425e939fac5016b6b.api.vestauth.com
+```
+
+Format: `{agent-uid}.{discovery-hostname}`
+
+<Note>
+The discovery URL is constructed by prepending the agent UID as a subdomain to the discovery hostname.
+</Note>
+
+## Creating Signatures
+
+Here's how Vestauth creates signatures:
+
+### 1. Build Signature Parameters
+
+```javascript src/lib/helpers/signatureParams.js
+const crypto = require('crypto')
+const epoch = require('./epoch')
+
+function signatureParams (kid, tag = 'web-bot-auth', nonce = null) {
+  const { created, expires } = epoch()
+
+  if (!nonce) nonce = crypto.randomBytes(64).toString('base64url')
+
+  return '("@authority");' +
+    `created=${created};` +
+    `keyid="${kid}";` +
+    'alg="ed25519";' +
+    `expires=${expires};` +
+    `nonce="${nonce}";` +
+    `tag="${tag}"`
+}
+```
+
+### 2. Create Signature Base
+
+The signature base is constructed from the authority and signature parameters:
+
+```javascript src/lib/helpers/authorityMessage.js
+function authorityMessage (uri, signatureParams) {
+  const u = new URL(uri)
+  const authority = u.host // includes port if present
+
+  return [
+    `"@authority": ${authority}`,
+    `"@signature-params": ${signatureParams}`
+  ].join('\n')
+}
+```
+
+**Example signature base:**
+```
+"@authority": api.vestauth.com
+"@signature-params": ("@authority");created=1770247189;keyid="B0u80Gw28W9U2Jl5t_EBiWeBajO2104kOYZ9Ikucl5I";alg="ed25519";expires=1770247489;nonce="NURxn28X...";tag="web-bot-auth"
+```
+
+### 3. Sign with Private Key
+
+```javascript src/lib/helpers/webBotAuthSignature.js
+const crypto = require('crypto')
+
+function webBotAuthSignature (method = 'GET', uri = '', signatureParams, privateJwk) {
+  const message = authorityMessage(uri, signatureParams)
+
+  return crypto.sign(
+    null,
+    Buffer.from(message, 'utf8'),
+    privateJwkObject(privateJwk)
+  ).toString('base64')
+}
+```
+
+### 4. Construct Headers
+
+```javascript src/lib/helpers/headers.js
+async function headers (httpMethod, uri, uid, privateJwk, tag = 'web-bot-auth', nonce = null, hostname = null) {
+  const kid = thumbprint(privateJwk)
+  privateJwk.kid = kid
+
+  const signatureInput = signatureParams(privateJwk.kid, tag, nonce)
+  const signature = webBotAuthSignature(httpMethod, uri, signatureInput, privateJwk)
+  const discoveryOrigin = getAgentDiscoveryOrigin(hostname)
+  const discoveryUrl = new URL(discoveryOrigin)
+  const signatureAgent = `${discoveryUrl.protocol}//${uid}.${discoveryUrl.host}`
+
+  return {
+    Signature: `sig1=:${signature}:`,
+    'Signature-Input': `sig1=${signatureInput}`,
+    'Signature-Agent': `sig1="${signatureAgent}"`
+  }
+}
+```
+
+## Verifying Signatures
+
+Tools verify signatures using the following process:
+
+### 1. Extract Headers
+
+```javascript
+const signature = headers.Signature || headers.signature
+const signatureInput = headers['Signature-Input'] || headers['signature-input']
+const signatureAgent = headers['Signature-Agent'] || headers['signature-agent']
+```
+
+### 2. Check Expiration
+
+```javascript
+const values = parseSignatureInputHeader(signatureInput)
+const { expires } = values
+
+if (expires && expires < (Math.floor(Date.now() / 1000))) {
+  throw new Error('Signature has expired')
+}
+```
+
+### 3. Fetch Public Key
+
+Retrieve the agent's public key from the discovery endpoint:
+
+```javascript src/lib/helpers/verify.js
+const { value } = parseSignatureAgentHeader(signatureAgent)
+const { host, origin } = extractHostAndHostname(value)
+
+const uid = host.split('.')[0]
+const wellKnownUrl = `${origin}/.well-known/http-message-signatures-directory`
+
+const resp = await http(wellKnownUrl, { method: 'GET' })
+const json = await resp.body.json()
+
+let publicJwk = json.keys[0]
+if (kid) {
+  publicJwk = json.keys.find((key) => key.kid === kid)
+}
+```
+
+### 4. Verify Signature
+
+```javascript
+const message = authorityMessage(uri, signatureParams)
+
+const success = crypto.verify(
+  null,
+  Buffer.from(message, 'utf8'),
+  publicJwkObject(publicJwk),
+  Buffer.from(sig, 'base64')
+)
+
+if (!success) {
+  throw new Error('Invalid signature')
+}
+```
+
+## Replay Attack Prevention
+
+Vestauth prevents replay attacks using multiple mechanisms:
+
+### Time Windows
+
+Signatures include `created` and `expires` timestamps:
+
+```javascript
+function epoch () {
+  const created = Math.floor(Date.now() / 1000)
+  const expires = created + 300 // 5 minutes
+
+  return { created, expires }
+}
+```
+
+Tools verify the signature is still within its validity window.
+
+### Nonce Values
+
+Each signature includes a unique 64-byte random nonce:
+
+```javascript
+const nonce = crypto.randomBytes(64).toString('base64url')
+```
+
+Tools may optionally track nonces to ensure they're only used once.
+
+<Warning>
+Intercepted requests cannot be reused because signatures are short-lived and tied to unique nonce values.
+</Warning>
+
+## Using vestauth agent curl
+
+The CLI automatically signs requests:
+
+```bash
+vestauth agent curl https://api.vestauth.com/whoami
+```
+
+View the signed headers:
+
+```bash
+vestauth agent headers GET https://api.vestauth.com/whoami --pp
+```
+
+Output:
+```json
+{
+  "Signature": "sig1=:d4Id5SXhUExsf1XyruD8eBmlDtWzt/vezoCS+SKf0M8CxSkhKBtdHH7KkYyMN6E0hmxmNHsYus11u32nhvpWBQ==:",
+  "Signature-Input": "sig1=(\"@authority\");created=1770247189;keyid=\"B0u80Gw28W9U2Jl5t_EBiWeBajO2104kOYZ9Ikucl5I\";alg=\"ed25519\";expires=1770247489;nonce=\"NURxn28X7zyKJ9k5bHxuOyO5qdvF9L5s2qHmhTrGUzbwGSIoUCHmwSlwiiCRgTDGuum83yyWMHJU4jmrVI_XPg\";tag=\"web-bot-auth\"",
+  "Signature-Agent": "sig1=agent-4b94ccd425e939fac5016b6b.api.vestauth.com"
+}
+```
+
+## Tool Verification API
+
+Tools verify agent requests with a single function call:
+
+```javascript
+const vestauth = require('vestauth')
+
+app.post('/whoami', async (req, res) => {
+  try {
+    const url = `${req.protocol}://${req.get('host')}${req.originalUrl}`
+    const agent = await vestauth.tool.verify(req.method, url, req.headers)
+
+    res.json(agent)
+  } catch (err) {
+    res.status(401).json({ code: 401, error: { message: err.message }})
+  }
+})
+```
+
+The `verify` function returns the verified agent identity:
+
+```json
+{
+  "uid": "agent-4b94ccd425e939fac5016b6b",
+  "kid": "B0u80Gw28W9U2Jl5t_EBiWeBajO2104kOYZ9Ikucl5I",
+  "public_jwk": { ... },
+  "well_known_url": "https://agent-4b94ccd425e939fac5016b6b.api.vestauth.com/.well-known/http-message-signatures-directory"
+}
+```
+
+## Security Benefits
+
+<Accordion title="No shared secrets">
+Private keys never leave the agent. Tools only need public keys to verify signatures.
+</Accordion>
+
+<Accordion title="Cryptographic proof">
+Signatures provide mathematical proof that the request was created by the agent holding the private key.
+</Accordion>
+
+<Accordion title="Request integrity">
+Signatures are computed over request components, so tampering invalidates the signature.
+</Accordion>
+
+<Accordion title="Replay protection">
+Time windows and nonces prevent intercepted requests from being reused.
+</Accordion>
+
+<Accordion title="Easy rotation">
+Keys can be rotated without updating tools or reconfiguring integrations.
+</Accordion>

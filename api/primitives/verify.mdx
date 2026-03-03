@@ -1,0 +1,263 @@
+---
+title: primitives.verify()
+description: Verifies RFC 9421 signed HTTP requests with optional public key discovery
+---
+
+## Overview
+
+The `primitives.verify()` function verifies HTTP Signature (RFC 9421) on incoming requests. It can either use a provided public key or automatically discover it via the `Signature-Agent` header.
+
+<Info>
+  For tool providers, consider using `tool.verify()` instead, which adds FQDN trust validation. Use `primitives.verify()` when you need low-level verification control or custom trust logic.
+</Info>
+
+## Signature
+
+```typescript
+primitives.verify(
+  httpMethod: HttpMethod,
+  uri: string,
+  headers?: HeaderBag,
+  publicJwk?: PublicJwk
+): Promise<VerifyResult>
+```
+
+## Parameters
+
+<ParamField path="httpMethod" type="HttpMethod" required>
+  The HTTP method of the request being verified.
+  
+  Valid values: `'GET'`, `'POST'`, `'PUT'`, `'PATCH'`, `'DELETE'`, `'OPTIONS'`, `'HEAD'`, or any custom string.
+</ParamField>
+
+<ParamField path="uri" type="string" required>
+  The full URI of the request being verified (e.g., `https://api.example.com/users`).
+</ParamField>
+
+<ParamField path="headers" type="HeaderBag" default="{}">
+  The HTTP headers from the incoming request. Should include `Signature`, `Signature-Input`, and optionally `Signature-Agent`.
+  
+  ```typescript
+  type HeaderBag = Record<string, string | string[] | undefined>
+  ```
+</ParamField>
+
+<ParamField path="publicJwk" type="PublicJwk" default="undefined">
+  The public key to use for verification. If not provided, the key will be discovered via the `Signature-Agent` header.
+  
+  ```typescript
+  {
+    kty: 'OKP',
+    crv: 'Ed25519',
+    x: string,
+    kid?: string
+  }
+  ```
+</ParamField>
+
+## Return Value
+
+Returns a Promise that resolves to a `VerifyResult` object:
+
+<ResponseField name="uid" type="string">
+  The unique identifier of the agent that signed the request (extracted from `Signature-Agent`).
+</ResponseField>
+
+<ResponseField name="kid" type="string">
+  The key ID (thumbprint) of the public key used to verify the signature.
+</ResponseField>
+
+<ResponseField name="public_jwk" type="PublicJwk">
+  The public JWK that was used to verify the signature.
+  
+  ```typescript
+  {
+    kty: 'OKP',
+    crv: 'Ed25519',
+    x: string,
+    kid?: string
+  }
+  ```
+</ResponseField>
+
+<ResponseField name="well_known_url" type="string">
+  The well-known URL where the public key was discovered (only present if auto-discovered).
+</ResponseField>
+
+## Example - Auto-Discovery
+
+```javascript
+import { primitives } from 'vestauth'
+import express from 'express'
+
+const app = express()
+
+app.post('/api/action', async (req, res) => {
+  try {
+    // Verify with auto-discovery (uses Signature-Agent header)
+    const result = await primitives.verify(
+      req.method,
+      `https://${req.get('host')}${req.originalUrl}`,
+      req.headers
+    )
+    
+    console.log('Verified agent:', result.uid)
+    console.log('Public key:', result.public_jwk)
+    console.log('Discovered from:', result.well_known_url)
+    
+    res.json({ success: true })
+    
+  } catch (error) {
+    console.error('Verification failed:', error.message)
+    res.status(401).json({ error: 'Unauthorized' })
+  }
+})
+
+app.listen(3000)
+```
+
+## Example - With Provided Public Key
+
+```javascript
+import { primitives } from 'vestauth'
+
+// You have the agent's public key from a previous registration
+const knownPublicKey = {
+  kty: 'OKP',
+  crv: 'Ed25519',
+  x: 'MYf21IkWEi6dXOtzUdbll3SMCaFiSFi4KgqktFZinCE',
+  kid: 'rBE7_zLOVYk4oYEdI-01qpXHWNMyZYD-4LEf6HiyZ9Q'
+}
+
+// Verify using the known key (no network request)
+const result = await primitives.verify(
+  'POST',
+  'https://api.example.com/action',
+  incomingHeaders,
+  knownPublicKey
+)
+
+console.log('Signature verified with known key')
+console.log('Key ID:', result.kid)
+```
+
+## Example Output
+
+```javascript
+{
+  uid: 'abc123def456',
+  kid: 'rBE7_zLOVYk4oYEdI-01qpXHWNMyZYD-4LEf6HiyZ9Q',
+  public_jwk: {
+    kty: 'OKP',
+    crv: 'Ed25519',
+    x: 'MYf21IkWEi6dXOtzUdbll3SMCaFiSFi4KgqktFZinCE',
+    kid: 'rBE7_zLOVYk4oYEdI-01qpXHWNMyZYD-4LEf6HiyZ9Q'
+  },
+  well_known_url: 'https://abc123.api.vestauth.com/.well-known/http-message-signatures-directory'
+}
+```
+
+## Public Key Discovery
+
+When `publicJwk` is not provided, the verification process:
+
+1. **Parses Signature-Agent**: Extracts the agent's discovery URL from the `Signature-Agent` header
+2. **Builds Well-Known URL**: Constructs `https://{uid}.{host}/.well-known/http-message-signatures-directory`
+3. **Fetches Keys**: Makes a GET request to the well-known endpoint
+4. **Selects Key**: Finds the key matching the `keyid` from `Signature-Input`
+5. **Verifies**: Uses the discovered key to verify the signature
+
+```javascript
+import { primitives } from 'vestauth'
+
+// Headers from incoming request
+const headers = {
+  'Signature': 'sig1=:K2qGT5srn2OGbOIDzQ6kYT+ruaycnDAAUpKv+ePFfD0=:',
+  'Signature-Input': 'sig1=("@method" "@authority");keyid="rBE7...";created=1234567890',
+  'Signature-Agent': 'sig1="https://abc123.api.vestauth.com"'
+}
+
+// Auto-discover and verify
+const result = await primitives.verify('POST', uri, headers)
+
+// result.well_known_url will be:
+// "https://abc123.api.vestauth.com/.well-known/http-message-signatures-directory"
+```
+
+## Signature Expiration
+
+If the `Signature-Input` includes an `expires` parameter, the signature is checked for expiration:
+
+```javascript
+import { primitives } from 'vestauth'
+
+try {
+  await primitives.verify('POST', uri, headers)
+} catch (error) {
+  if (error.code === 'EXPIRED_SIGNATURE') {
+    console.error('Signature has expired')
+  }
+}
+```
+
+## Error Handling
+
+```javascript
+import { primitives } from 'vestauth'
+
+try {
+  const result = await primitives.verify('POST', uri, headers)
+  // Success
+} catch (error) {
+  switch (error.code) {
+    case 'MISSING_SIGNATURE_INPUT':
+      console.error('Signature-Input header is missing or empty')
+      break
+    case 'EXPIRED_SIGNATURE':
+      console.error('Signature has expired')
+      break
+    case 'MISSING_PUBLIC_JWK':
+      console.error('Could not resolve public key')
+      break
+    case 'INVALID_SIGNATURE':
+      console.error('Signature verification failed')
+      break
+    default:
+      console.error('Verification error:', error.message)
+  }
+}
+```
+
+## Common Errors
+
+- **Missing Signature-Input**: The `Signature-Input` header is missing or malformed
+- **Expired Signature**: The signature's `expires` timestamp is in the past
+- **Missing Public JWK**: No public key provided and auto-discovery failed
+- **Invalid Signature**: The cryptographic signature verification failed (tampered request or wrong key)
+
+## Verification Flow
+
+1. **Parse Headers**: Extract and parse `Signature`, `Signature-Input`, and `Signature-Agent`
+2. **Check Expiration**: Validate the signature hasn't expired (if `expires` is present)
+3. **Resolve Public Key**:
+   - Use provided `publicJwk` if given
+   - Otherwise, discover via `Signature-Agent` well-known endpoint
+4. **Build Signature Base**: Reconstruct the signature base string from the request
+5. **Verify**: Use Ed25519 to verify the signature against the public key
+6. **Return Result**: Return agent info and verification details
+
+## Localhost Support
+
+When the `Signature-Agent` hostname is `localhost` or `127.0.0.1`, the verification automatically handles port mapping:
+
+```javascript
+// Signature-Agent: sig1="https://agent.localhost:3000"
+// Will fetch from: http://127.0.0.1:3000/.well-known/...
+// With Host header: agent.localhost:3000
+```
+
+## Related Methods
+
+- [tool.verify()](/api/tool/verify) - Higher-level verification with FQDN trust validation
+- [primitives.headers()](/api/primitives/headers) - Generate signature headers
+- [agent.headers()](/api/agent/headers) - Generate headers using .env credentials

@@ -1,0 +1,115 @@
+---
+title: agent.init()
+description: Creates or reuses an Ed25519 keypair, registers the agent, and writes credentials to .env
+---
+
+## Overview
+
+The `agent.init()` method initializes a new Vestauth agent by creating (or reusing) an Ed25519 keypair, registering it with the Vestauth API, and persisting the credentials to your `.env` file.
+
+## Signature
+
+```typescript
+agent.init(): Promise<{
+  AGENT_PUBLIC_JWK: PublicJwk
+  AGENT_UID: string
+  path: string
+  isNew: boolean
+}>
+```
+
+## Parameters
+
+This method takes no parameters. It automatically reads existing credentials from `.env` if available.
+
+## Return Value
+
+Returns a Promise that resolves to an object with the following properties:
+
+<ResponseField name="AGENT_PUBLIC_JWK" type="PublicJwk" required>
+  The public JWK (JSON Web Key) for the agent. This is an Ed25519 OKP key.
+  
+  ```typescript
+  {
+    kty: 'OKP',
+    crv: 'Ed25519',
+    x: string,
+    kid?: string
+  }
+  ```
+</ResponseField>
+
+<ResponseField name="AGENT_UID" type="string" required>
+  The unique identifier (UID) assigned to this agent by Vestauth.
+</ResponseField>
+
+<ResponseField name="path" type="string" required>
+  The path to the `.env` file where credentials were written (defaults to `.env`).
+</ResponseField>
+
+<ResponseField name="isNew" type="boolean" required>
+  Indicates whether this is a newly created agent (`true`) or an existing agent that was re-registered (`false`).
+</ResponseField>
+
+## Environment Variables
+
+After calling `init()`, the following variables are written to your `.env` file:
+
+- `AGENT_UID` - The agent's unique identifier
+- `AGENT_PUBLIC_JWK` - The agent's public key (JSON string)
+- `AGENT_PRIVATE_JWK` - The agent's private key (JSON string)
+- `AGENT_HOSTNAME` - The Vestauth API hostname (only if non-default)
+
+## Example
+
+```javascript
+import { agent } from 'vestauth'
+
+// Initialize a new agent
+const result = await agent.init()
+
+console.log('Agent UID:', result.AGENT_UID)
+console.log('Public Key:', result.AGENT_PUBLIC_JWK)
+console.log('Is new agent:', result.isNew)
+console.log('Credentials saved to:', result.path)
+```
+
+## Example Output
+
+```javascript
+{
+  AGENT_UID: 'abc123def456',
+  AGENT_PUBLIC_JWK: {
+    kty: 'OKP',
+    crv: 'Ed25519',
+    x: 'MYf21IkWEi6dXOtzUdbll3SMCaFiSFi4KgqktFZinCE',
+    kid: 'rBE7_zLOVYk4oYEdI-01qpXHWNMyZYD-4LEf6HiyZ9Q'
+  },
+  path: '.env',
+  isNew: true
+}
+```
+
+## Behavior
+
+1. **Keypair Creation**: If `AGENT_PRIVATE_JWK` exists in `.env`, it will be reused. Otherwise, a new Ed25519 keypair is generated.
+2. **Registration**: The agent is registered with the Vestauth API at `https://api.vestauth.com` (or a custom hostname if configured).
+3. **Persistence**: All credentials are written to `.env` using `dotenvx` for secure storage.
+4. **Idempotency**: Safe to call multiple times - will reuse existing keys if found.
+
+## Error Handling
+
+```javascript
+try {
+  const result = await agent.init()
+  console.log('Agent initialized:', result.AGENT_UID)
+} catch (error) {
+  console.error('Failed to initialize agent:', error.message)
+}
+```
+
+## Related Methods
+
+- [agent.headers()](/api/agent/headers) - Generate signature headers for requests
+- [agent.rotate()](/api/agent/rotate) - Rotate the agent's keypair
+- [primitives.keypair()](/api/primitives/keypair) - Create a keypair without registration

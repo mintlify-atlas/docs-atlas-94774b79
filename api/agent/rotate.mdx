@@ -1,0 +1,192 @@
+---
+title: agent.rotate()
+description: Rotates the agent's keypair and updates the .env file with new credentials
+---
+
+## Overview
+
+The `agent.rotate()` method generates a new Ed25519 keypair for your agent, registers it with Vestauth, and updates your `.env` file. This is useful for security best practices and key rotation policies.
+
+## Signature
+
+```typescript
+agent.rotate(
+  uid: string,
+  privateJwk: string,
+  tag?: string,
+  nonce?: string | null
+): Promise<{
+  AGENT_PUBLIC_JWK: PublicJwk
+  AGENT_UID: string
+  path: string
+}>
+```
+
+## Parameters
+
+<ParamField path="uid" type="string" required>
+  The agent's current unique identifier. Used to authenticate the rotation request.
+</ParamField>
+
+<ParamField path="privateJwk" type="string" required>
+  The agent's current private JWK as a JSON string. Used to sign the rotation request.
+</ParamField>
+
+<ParamField path="tag" type="string" default="web-bot-auth">
+  The signature tag to use when signing the rotation request.
+</ParamField>
+
+<ParamField path="nonce" type="string | null" default="null">
+  An optional nonce value for additional security during rotation.
+</ParamField>
+
+## Return Value
+
+Returns a Promise that resolves to an object with the following properties:
+
+<ResponseField name="AGENT_PUBLIC_JWK" type="PublicJwk" required>
+  The new public JWK (JSON Web Key) for the agent.
+  
+  ```typescript
+  {
+    kty: 'OKP',
+    crv: 'Ed25519',
+    x: string,
+    kid: string
+  }
+  ```
+</ResponseField>
+
+<ResponseField name="AGENT_UID" type="string" required>
+  The agent's UID (unchanged after rotation).
+</ResponseField>
+
+<ResponseField name="path" type="string" required>
+  The path to the `.env` file where new credentials were written.
+</ResponseField>
+
+## Environment Variables
+
+After calling `rotate()`, the following variables are updated in your `.env` file:
+
+- `AGENT_PUBLIC_JWK` - The agent's new public key (JSON string)
+- `AGENT_PRIVATE_JWK` - The agent's new private key (JSON string)
+
+The `AGENT_UID` and `AGENT_HOSTNAME` remain unchanged.
+
+## Example
+
+```javascript
+import { agent } from 'vestauth'
+import dotenv from 'dotenv'
+
+// Load current credentials
+dotenv.config()
+
+const uid = process.env.AGENT_UID
+const privateJwk = process.env.AGENT_PRIVATE_JWK
+
+// Rotate the keypair
+const result = await agent.rotate(uid, privateJwk)
+
+console.log('Keypair rotated successfully')
+console.log('New public key:', result.AGENT_PUBLIC_JWK)
+console.log('Updated file:', result.path)
+```
+
+## Example Output
+
+```javascript
+{
+  AGENT_PUBLIC_JWK: {
+    kty: 'OKP',
+    crv: 'Ed25519',
+    x: 'NewX123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabc',
+    kid: 'NewKid123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ'
+  },
+  AGENT_UID: 'abc123def456',
+  path: '.env'
+}
+```
+
+## Rotation Flow
+
+1. **Generate New Keypair**: A fresh Ed25519 keypair is created
+2. **Sign Request**: The rotation request is signed with the current (old) private key
+3. **API Call**: The signed request is sent to Vestauth's `/rotate` endpoint
+4. **Update .env**: The new keys are written to `.env`, replacing the old ones
+5. **Complete**: The old keys are now invalid; only the new keys will work
+
+## Security Considerations
+
+<Warning>
+  After rotation, the old private key is immediately invalidated. Ensure you:
+  - Have successfully written the new credentials to `.env`
+  - Have restarted any services using the old credentials
+  - Have verified the rotation was successful before discarding the old key
+</Warning>
+
+## Example with Error Handling
+
+```javascript
+import { agent } from 'vestauth'
+import dotenv from 'dotenv'
+
+dotenv.config()
+
+const uid = process.env.AGENT_UID
+const privateJwk = process.env.AGENT_PRIVATE_JWK
+
+if (!uid || !privateJwk) {
+  console.error('Agent credentials not found. Run agent.init() first.')
+  process.exit(1)
+}
+
+try {
+  const result = await agent.rotate(uid, privateJwk)
+  console.log('Rotation successful!')
+  console.log('New key ID:', result.AGENT_PUBLIC_JWK.kid)
+  
+  // Reload environment to use new credentials
+  dotenv.config({ override: true })
+  
+} catch (error) {
+  console.error('Rotation failed:', error.message)
+  // Old credentials are still valid if rotation failed
+}
+```
+
+## Scheduled Rotation
+
+```javascript
+import { agent } from 'vestauth'
+import dotenv from 'dotenv'
+
+// Rotate keys every 30 days
+const ROTATION_INTERVAL = 30 * 24 * 60 * 60 * 1000 // 30 days in ms
+
+async function rotateIfNeeded() {
+  dotenv.config()
+  
+  const lastRotation = new Date(process.env.LAST_ROTATION || 0)
+  const now = new Date()
+  
+  if (now - lastRotation > ROTATION_INTERVAL) {
+    const uid = process.env.AGENT_UID
+    const privateJwk = process.env.AGENT_PRIVATE_JWK
+    
+    await agent.rotate(uid, privateJwk)
+    
+    // Update rotation timestamp (you'd need to implement this)
+    console.log('Keys rotated successfully')
+  }
+}
+
+rotateIfNeeded()
+```
+
+## Related Methods
+
+- [agent.init()](/api/agent/init) - Initialize a new agent
+- [agent.headers()](/api/agent/headers) - Generate signature headers with current credentials
+- [primitives.keypair()](/api/primitives/keypair) - Generate a keypair without registration

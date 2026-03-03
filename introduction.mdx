@@ -1,0 +1,190 @@
+---
+title: 'Introduction to Vestauth'
+description: 'Web-bot-auth for agents - cryptographic identities, authentication, and tools for autonomous agents'
+---
+
+<img
+  className="block dark:hidden"
+  src="https://vestauth.com/better-banner.png"
+  alt="Vestauth Hero Light"
+/>
+<img
+  className="hidden dark:block"
+  src="https://vestauth.com/better-banner.png"
+  alt="Vestauth Hero Dark"
+/>
+
+## What is Vestauth?
+
+Vestauth gives agents cryptographic identities and a simple way to authenticate HTTP requests. Instead of API keys, bearer tokens, or passwords, Vestauth uses public/private key cryptography built on open internet standards.
+
+Created by [@motdotla](https://github.com/motdotla), the creator of [dotenv](https://github.com/motdotla/dotenv) and [dotenvx](https://github.com/dotenvx/dotenvx).
+
+<Note>
+  Vestauth implements [RFC 9421](https://datatracker.ietf.org/doc/rfc9421/) (HTTP Message Signatures) and the [Web-Bot-Auth draft](https://datatracker.ietf.org/doc/html/draft-meunier-web-bot-auth-architecture) specification.
+</Note>
+
+## Key Features
+
+<CardGroup cols={2}>
+  <Card
+    title="Cryptographic Identity"
+    icon="fingerprint"
+    href="/quickstart"
+  >
+    Give agents Ed25519 key-based identities. No shared secrets, just cryptographic proof.
+  </Card>
+  <Card
+    title="Built-in Tools"
+    icon="wrench"
+    href="/concepts/tools"
+  >
+    Call file storage, geolocation, secrets, and more with signed requests.
+  </Card>
+  <Card
+    title="Simple Authentication"
+    icon="shield-check"
+    href="/concepts/authentication"
+  >
+    Verify agent requests with a single line: `vestauth.tool.verify(method, url, headers)`
+  </Card>
+  <Card
+    title="Self-Hosting Ready"
+    icon="server"
+    href="/self-hosting/overview"
+  >
+    Run your own Vestauth infrastructure with PostgreSQL backend.
+  </Card>
+</CardGroup>
+
+## How It Works
+
+Vestauth replaces shared secrets with cryptographic signing:
+
+1. **Agent generates a keypair** - Public and private Ed25519 keys stored in `.env`
+2. **Agent signs HTTP requests** - Private key creates unforgeable signatures
+3. **Tool verifies signatures** - Public key proves the request came from that agent
+4. **No secrets transmitted** - Only signatures are sent over the network
+
+<CodeGroup>
+
+```bash Agent Side
+# Initialize an agent
+vestauth agent init
+
+# Make authenticated requests
+vestauth agent curl https://api.vestauth.com/whoami --pp
+```
+
+```javascript Tool Side
+const vestauth = require('vestauth')
+
+app.post('/whoami', async (req, res) => {
+  try {
+    const url = `${req.protocol}://${req.get('host')}${req.originalUrl}`
+    const agent = await vestauth.tool.verify(req.method, url, req.headers)
+    
+    res.json(agent)
+  } catch (err) {
+    res.status(401).json({ code: 401, error: { message: err.message }})
+  }
+})
+```
+
+</CodeGroup>
+
+## Why Vestauth?
+
+<CardGroup cols={3}>
+  <Card title="No Shared Secrets" icon="key">
+    Private keys never leave the agent. Public keys are safe to share.
+  </Card>
+  <Card title="Easy Key Rotation" icon="arrows-rotate">
+    Rotate keys without disrupting your agents: `vestauth agent rotate`
+  </Card>
+  <Card title="Strong Attribution" icon="stamp">
+    Every request is cryptographically tied to a specific agent identity.
+  </Card>
+  <Card title="Replay Protection" icon="clock">
+    Built-in nonces, timestamps, and expiration prevent replay attacks.
+  </Card>
+  <Card title="Standards Based" icon="book">
+    Built on RFC 9421 and Web-Bot-Auth specifications.
+  </Card>
+  <Card title="Developer Friendly" icon="code">
+    Simple CLI, drop-in curl wrapper, and minimal API surface.
+  </Card>
+</CardGroup>
+
+## Comparison with Other Auth Methods
+
+| Capability | Vestauth | API Keys | OAuth | Cookies |
+|---|---|---|---|---|
+| **No browser required** | ✅ | ✅ | ⚠️ | ❌ |
+| **Easy to automate** | ✅ | ✅ | ⚠️ | ❌ |
+| **No shared secret** | ✅ | ❌ | ⚠️ | ❌ |
+| **Per-request identity proof** | ✅ | ❌ | ⚠️ | ❌ |
+| **Easy key rotation** | ✅ | ⚠️ | ⚠️ | ⚠️ |
+| **No secret storage (tool side)** | ✅ | ❌ | ❌ | ❌ |
+| **Strong agent attribution** | ✅ | ⚠️ | ⚠️ | ❌ |
+| **Stateless verification** | ✅ | ✅ | ✅ | ❌ |
+
+<Tip>
+  Ready to give your agents an identity? Start with the [Quickstart](/quickstart) guide.
+</Tip>
+
+## Use Cases
+
+Vestauth isn't just for AI agents. Use it for:
+
+- AI agents and autonomous systems
+- Developer tools and CLIs
+- Automation services and workflows
+- Bots and scheduled tasks
+- Infrastructure tools and monitoring
+
+## Standards Compliance
+
+Vestauth builds on proven internet standards:
+
+<CardGroup cols={2}>
+  <Card title="RFC 9421" icon="file-lines" href="https://datatracker.ietf.org/doc/rfc9421/">
+    HTTP Message Signatures - defines how requests are cryptographically signed and verified
+  </Card>
+  <Card title="Web-Bot-Auth Draft" icon="robot" href="https://datatracker.ietf.org/doc/html/draft-meunier-web-bot-auth-architecture">
+    Authentication architecture and headers for autonomous agents
+  </Card>
+</CardGroup>
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card
+    title="Quickstart"
+    icon="rocket"
+    href="/quickstart"
+  >
+    Get your first agent running in 2 minutes
+  </Card>
+  <Card
+    title="Installation"
+    icon="download"
+    href="/installation"
+  >
+    Install Vestauth via npm, curl, or GitHub releases
+  </Card>
+  <Card
+    title="Call Tools"
+    icon="plug"
+    href="/concepts/tools"
+  >
+    Learn how to use built-in and third-party tools
+  </Card>
+  <Card
+    title="Build Tools"
+    icon="hammer"
+    href="/advanced/building-tools"
+  >
+    Create your own tools with simple verification
+  </Card>
+</CardGroup>

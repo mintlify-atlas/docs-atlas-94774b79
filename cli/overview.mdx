@@ -1,0 +1,127 @@
+---
+title: 'CLI Overview'
+description: 'Complete guide to the Vestauth command-line interface'
+icon: 'terminal'
+---
+
+## Introduction
+
+The Vestauth CLI provides tools to create agent identities, sign HTTP requests, verify signatures, and run your own Vestauth infrastructure.
+
+## Installation
+
+<Tabs>
+  <Tab title="npm">
+    ```bash
+    npm i -g vestauth
+    ```
+  </Tab>
+  <Tab title="curl">
+    ```bash
+    curl -sfS https://vestauth.sh | sh
+    ```
+  </Tab>
+  <Tab title="GitHub Releases">
+    ```bash
+    curl -L -o vestauth.tar.gz "https://github.com/vestauth/vestauth/releases/latest/download/vestauth-$(uname -s)-$(uname -m).tar.gz"
+    tar -xzf vestauth.tar.gz
+    ./vestauth agent init
+    ```
+  </Tab>
+</Tabs>
+
+## Command Groups
+
+Vestauth organizes commands into logical groups:
+
+| Command Group | Description | Icon |
+|--------------|-------------|------|
+| `agent` | Create and manage agent identities | ▶️ |
+| `tool` | Verify agent requests in your tools | 🔨 |
+| `server` | Run your own Vestauth server | 🖥️ |
+| `primitives` | Low-level cryptographic operations | 🔩 |
+
+## Global Options
+
+These options work with all commands:
+
+<ParamField path="--log-level" type="string" default="info">
+  Set log level: `error`, `warn`, `info`, `verbose`, `debug`
+</ParamField>
+
+<ParamField path="--quiet" type="boolean">
+  Set log level to `error` (shorthand)
+</ParamField>
+
+<ParamField path="--verbose" type="boolean">
+  Set log level to `verbose` (shorthand)
+</ParamField>
+
+<ParamField path="--debug" type="boolean">
+  Set log level to `debug` for troubleshooting
+</ParamField>
+
+## Quick Examples
+
+### Create an Agent
+
+```bash
+vestauth agent init
+```
+
+```
+✔ agent created (.env/AGENT_UID=agent-4b94ccd425e939fac5016b6b)
+```
+
+### Call a Tool
+
+```bash
+vestauth agent curl https://api.vestauth.com/whoami --pp
+```
+
+```json
+{
+  "uid": "agent-609a4fd2ebf4e6347108c517",
+  "kid": "FGzgs758DBGnI1S0BejChDsK0IKZm3qPpOOXdRnnBkM",
+  "public_jwk": {
+    ...
+  },
+  "well_known_url": "https://agent-609a4fd2ebf4e6347108c517.api.vestauth.com/.well-known/http-message-signatures-directory"
+}
+```
+
+### Verify a Request
+
+```bash
+vestauth tool verify GET https://api.vestauth.com/whoami \
+  --signature "sig1=:H1kxwSRWFbIzKbHaUy4hQFp/JrmVTX//72JPHcW4W7cPt9q6LytRJgx5pUgWrrr7DCcMWgx/jpTPc8Ht8SZ3CQ==:" \
+  --signature-input "sig1=(\"@authority\");created=1770396709;keyid=\"FGzgs758DBGnI1S0BejChDsK0IKZm3qPpOOXdRnnBkM\";alg=\"ed25519\";expires=1770397009;nonce=\"BZSDVktdkjO6XH5jafAdPDttsB6eytXO7u8KXJN1tMtd5bprE3rp08HiaTRo7H6gZGtYb4_qtL7RiGi8P2Gq7w\";tag=\"web-bot-auth\"" \
+  --signature-agent "sig1=agent-609a4fd2ebf4e6347108c517.api.vestauth.com"
+```
+
+## Getting Help
+
+Display help for any command:
+
+```bash
+vestauth help
+vestauth help agent
+vestauth agent init --help
+```
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Agent Commands" icon="robot" href="/cli/agent-commands">
+    Create identities and call tools
+  </Card>
+  <Card title="Tool Commands" icon="wrench" href="/cli/tool-commands">
+    Verify agent requests
+  </Card>
+  <Card title="Server Commands" icon="server" href="/cli/server-commands">
+    Self-host Vestauth
+  </Card>
+  <Card title="Primitives" icon="gears" href="/cli/primitives-commands">
+    Low-level cryptographic operations
+  </Card>
+</CardGroup>

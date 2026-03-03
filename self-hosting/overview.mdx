@@ -1,0 +1,78 @@
+---
+title: 'Self-Hosting Overview'
+description: 'Run your own Vestauth server for complete control over your agent infrastructure'
+---
+
+## Why Self-Host Vestauth?
+
+Self-hosting Vestauth gives you complete control over your agent authentication infrastructure. By running your own server, you:
+
+- **Own your data**: All agent identities and public keys are stored in your own database
+- **Control your infrastructure**: Deploy on your own hardware or cloud provider
+- **Customize as needed**: Full access to the server codebase for modifications
+- **Ensure privacy**: Agent registration and authentication happens on your infrastructure
+
+Vestauth is designed to be easy to self-host while maintaining the same cryptographic security as the hosted service.
+
+## Architecture Overview
+
+Vestauth's self-hosted architecture consists of three main components:
+
+### Server Application
+
+The Vestauth server is a Node.js/Express application that handles:
+
+- **Agent registration** (`/register`) - Agents register their public keys
+- **Key discovery** (`/.well-known/http-message-signatures-directory`) - Tools fetch agent public keys
+- **Authentication** (`/whoami`) - Verify agent signatures
+- **Key rotation** (`/rotate`) - Update agent cryptographic keys
+
+The server implementation can be found in `src/server/index.js`.
+
+### Database Layer
+
+Vestauth requires PostgreSQL to store:
+
+- **agents** table - Agent identities (uid, timestamps)
+- **public_jwks** table - Agent public keys (kid, value, state)
+
+The database schema is managed through migrations using Knex.js.
+
+### Subdomain Routing
+
+Vestauth uses subdomain-based routing for agent discovery:
+
+```
+agent-4b94ccd425e939fac5016b6b.vestauth.yoursite.com/.well-known/http-message-signatures-directory
+```
+
+This follows the [web-bot-auth](https://datatracker.ietf.org/doc/html/draft-meunier-web-bot-auth-architecture) specification for public key discovery.
+
+<Warning>
+**Production requirement**: Configure a wildcard DNS record for `*.${HOSTNAME}` to enable proper agent discovery.
+
+Example: If `HOSTNAME=vestauth.yourapp.com`, add a DNS record for `*.vestauth.yourapp.com`.
+</Warning>
+
+## Infrastructure Requirements
+
+- **Node.js** v14 or higher
+- **PostgreSQL** 12 or higher (local or managed)
+- **Wildcard DNS** configured for your hostname
+- **HTTPS** recommended for production deployments
+
+## Next Steps
+
+<Steps>
+  <Step title="Setup Server">
+    Follow the [setup guide](/self-hosting/setup) to initialize and run your Vestauth server.
+  </Step>
+  
+  <Step title="Configure Environment">
+    Learn about [configuration options](/self-hosting/configuration) including PORT, HOSTNAME, and DATABASE_URL.
+  </Step>
+  
+  <Step title="Setup Database">
+    Review [database setup](/self-hosting/database) for migration and connection details.
+  </Step>
+</Steps>

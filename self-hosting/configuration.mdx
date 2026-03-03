@@ -1,0 +1,266 @@
+---
+title: 'Configuration'
+description: 'Environment variables and configuration options for self-hosted Vestauth servers'
+---
+
+## Environment Variables
+
+Vestauth server configuration is managed through environment variables stored in a `.env` file. Run `vestauth server init` to create this file automatically.
+
+### PORT
+
+The port the server listens on.
+
+- **Default**: `3000`
+- **Type**: String or Number
+- **Example**: `"3000"` or `"8080"`
+
+```ini .env
+PORT="3000"
+```
+
+You can override this when starting the server:
+
+```bash
+vestauth server start --port 4567
+```
+
+### HOSTNAME
+
+The full URL where your Vestauth server is accessible. This is critical for agent registration and discovery.
+
+- **Default**: `http://localhost:3000`
+- **Type**: String (URL)
+- **Local development**: `http://localhost:3000`
+- **Production**: `https://vestauth.yoursite.com`
+
+```ini .env (Development)
+HOSTNAME="http://localhost:3000"
+```
+
+```ini .env (Production)
+HOSTNAME="https://vestauth.yoursite.com"
+```
+
+<Warning>
+**Critical for production**: The HOSTNAME must match your actual server URL. Agents use this to construct their discovery endpoints.
+
+For example, if `HOSTNAME=https://vestauth.yoursite.com`, agents will be discoverable at:
+```
+https://agent-{uid}.vestauth.yoursite.com/.well-known/http-message-signatures-directory
+```
+</Warning>
+
+You can override this when starting the server:
+
+```bash
+vestauth server start --hostname https://vestauth.yoursite.com
+```
+
+### DATABASE_URL
+
+PostgreSQL connection string.
+
+- **Default**: `postgres://localhost/vestauth_production`
+- **Type**: String (PostgreSQL connection URL)
+- **Format**: `postgresql://[user[:password]@][host][:port][/dbname][?param1=value1&...]`
+
+```ini .env (Local PostgreSQL)
+DATABASE_URL="postgres://localhost/vestauth_production"
+```
+
+```ini .env (Managed PostgreSQL)
+DATABASE_URL="postgresql://USER:PASS@aws-1-us-east-1.pooler.supabase.com:5432/postgres"
+```
+
+<Note>
+The database URL is used by:
+- `vestauth server db:create` - Creates the database
+- `vestauth server db:migrate` - Runs migrations
+- `vestauth server start` - Connects to the database
+</Note>
+
+You can override this when starting the server:
+
+```bash
+vestauth server start --database-url postgresql://USER:PASS@host:5432/db
+```
+
+## Configuration File
+
+The `.env` file is created in your current directory when you run `vestauth server init`. Here's a complete example:
+
+```ini .env
+# [vestauth server start] self-hosted vestauth server
+#
+# Usage:
+# $ vestauth server init --port=3001 --hostname="http://localhost:3001" --database-url="postgresql://USER:PASS@aws-1-us-east-1.pooler.supabase.com:5432/postgres"
+#
+# PORT: port the server listens on
+# HOSTNAME: http://localhost:3000 in dev or https://vestauth.yoursite.com in prod
+# DATABASE_URL: postgres://localhost/vestauth_production or a managed Postgres URL
+#
+
+PORT="3000"
+HOSTNAME="http://localhost:3000"
+DATABASE_URL="postgres://localhost/vestauth_production"
+```
+
+## Wildcard DNS Requirements
+
+<Warning>
+**Production deployment requirement**: Configure a wildcard DNS record for `*.${HOSTNAME}`.
+
+This is required for the [web-bot-auth](https://datatracker.ietf.org/doc/html/draft-meunier-web-bot-auth-architecture) `.well-known` discovery specification.
+</Warning>
+
+Vestauth uses subdomain-based routing to serve agent public keys. Each agent gets a unique subdomain:
+
+```
+agent-{uid}.vestauth.yoursite.com
+```
+
+For this to work, you must configure DNS to route all subdomains to your server.
+
+### Example DNS Configuration
+
+If your `HOSTNAME=https://vestauth.yourapp.com`, configure:
+
+```dns
+# Main domain (A record)
+vestauth.yourapp.com. IN A 203.0.113.10
+
+# Wildcard subdomain (A record)
+*.vestauth.yourapp.com. IN A 203.0.113.10
+```
+
+Or using CNAME:
+
+```dns
+# Main domain (CNAME)
+vestauth.yourapp.com. IN CNAME your-server.example.com.
+
+# Wildcard subdomain (CNAME)
+*.vestauth.yourapp.com. IN CNAME your-server.example.com.
+```
+
+### Local Development
+
+For local development with `localhost`, wildcard DNS works automatically:
+
+```
+http://agent-test.localhost:3000  ✓ Works
+http://agent-abc.localhost:3000   ✓ Works
+```
+
+### Testing Wildcard DNS
+
+Verify your wildcard DNS is working:
+
+```bash
+# Should resolve to your server IP
+dig agent-test.vestauth.yourapp.com
+
+# Test with curl
+curl http://agent-test.vestauth.yourapp.com
+```
+
+## Production Configuration Checklist
+
+<Steps>
+  <Step title="Update HOSTNAME">
+    Change from `http://localhost:3000` to your production domain:
+    ```ini
+    HOSTNAME="https://vestauth.yoursite.com"
+    ```
+  </Step>
+
+  <Step title="Configure Wildcard DNS">
+    Add DNS record for `*.vestauth.yoursite.com` pointing to your server.
+  </Step>
+
+  <Step title="Use Managed PostgreSQL">
+    Update DATABASE_URL to a production database:
+    ```ini
+    DATABASE_URL="postgresql://USER:PASS@aws-1-us-east-1.pooler.supabase.com:5432/postgres"
+    ```
+  </Step>
+
+  <Step title="Set Up HTTPS">
+    Configure SSL/TLS using:
+    - Let's Encrypt with Caddy (automatic HTTPS)
+    - Nginx with certbot
+    - Cloudflare proxy
+    - Load balancer SSL termination
+  </Step>
+
+  <Step title="Configure Reverse Proxy">
+    Set up nginx or Caddy to forward requests to your server port:
+    ```nginx nginx.conf
+    server {
+      listen 443 ssl;
+      server_name vestauth.yoursite.com *.vestauth.yoursite.com;
+      
+      location / {
+        proxy_pass http://localhost:3000;
+        proxy_set_header Host $host;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+      }
+    }
+    ```
+  </Step>
+</Steps>
+
+## Environment Variable Precedence
+
+Vestauth resolves configuration in this order:
+
+1. **Command-line flags** (highest priority)
+   ```bash
+   vestauth server start --port 4567
+   ```
+
+2. **.env file**
+   ```ini
+   PORT="3000"
+   ```
+
+3. **Default values** (lowest priority)
+   - PORT: `3000`
+   - HOSTNAME: `http://localhost:3000`
+   - DATABASE_URL: `postgres://localhost/vestauth_production`
+
+## Security Considerations
+
+<Warning>
+**Protect your `.env` file**: Never commit `.env` to version control. It contains database credentials and server configuration.
+
+Add to `.gitignore`:
+```gitignore
+.env
+.env.*
+```
+</Warning>
+
+### Database Security
+
+- Use strong passwords for PostgreSQL
+- Enable SSL for database connections in production
+- Restrict database access to your server's IP
+- Use read-only credentials where possible
+
+### Network Security
+
+- Always use HTTPS in production (not HTTP)
+- Configure firewall rules to restrict access
+- Use a reverse proxy (nginx, Caddy) for SSL termination
+- Enable rate limiting to prevent abuse
+
+## Advanced Configuration
+
+For advanced configuration options, you can modify the server code directly:
+
+- Server implementation: `src/server/index.js`
+- Database models: `src/server/models/`
+- Express middleware: `src/server/index.js` (lines 23-61)

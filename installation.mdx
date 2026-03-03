@@ -1,0 +1,331 @@
+---
+title: 'Installation'
+description: 'Install Vestauth via npm, curl, GitHub releases, or Windows executable'
+---
+
+## npm (Recommended)
+
+Install Vestauth globally using npm:
+
+```bash
+npm i -g vestauth
+```
+
+This installs the `vestauth` CLI and makes it available system-wide.
+
+<Note>
+  **Version**: The latest version is published to [npmjs.com/package/vestauth](https://www.npmjs.com/package/vestauth)
+  
+  Check your installed version: `vestauth --version`
+</Note>
+
+### Local Installation
+
+For project-specific installations:
+
+```bash
+npm install vestauth
+```
+
+Then use it programmatically:
+
+```javascript
+const vestauth = require('vestauth')
+
+// Initialize an agent
+const result = await vestauth.agent.init()
+console.log(result.AGENT_UID)
+```
+
+## curl Install Script
+
+Install Vestauth with a single curl command:
+
+```bash
+curl -sfS https://vestauth.sh | sh
+```
+
+This downloads and installs the latest binary for your platform.
+
+<Steps>
+  <Step title="Run the install script">
+    ```bash
+    curl -sfS https://vestauth.sh | sh
+    ```
+    
+    The script automatically detects your OS and architecture.
+  </Step>
+
+  <Step title="Verify installation">
+    ```bash
+    vestauth --version
+    ```
+    
+    You should see the installed version number.
+  </Step>
+
+  <Step title="Initialize an agent">
+    ```bash
+    vestauth agent init
+    ```
+    
+    This creates your first agent identity.
+  </Step>
+</Steps>
+
+<Tip>
+  The curl installer adds Vestauth to your `PATH` automatically. You may need to restart your shell.
+</Tip>
+
+## GitHub Releases
+
+Download pre-built binaries directly from GitHub releases:
+
+### macOS / Linux
+
+<Tabs>
+  <Tab title="Auto-detect">
+    ```bash
+    curl -L -o vestauth.tar.gz "https://github.com/vestauth/vestauth/releases/latest/download/vestauth-$(uname -s)-$(uname -m).tar.gz"
+    tar -xzf vestauth.tar.gz
+    ./vestauth agent init
+    ```
+    
+    This automatically downloads the correct binary for your system.
+  </Tab>
+
+  <Tab title="Manual Download">
+    Available binaries:
+    
+    - **macOS Intel**: `vestauth-Darwin-x86_64.tar.gz`
+    - **macOS Apple Silicon**: `vestauth-Darwin-arm64.tar.gz`
+    - **Linux x64**: `vestauth-Linux-x86_64.tar.gz`
+    - **Linux ARM64**: `vestauth-Linux-arm64.tar.gz`
+    
+    Download from [github.com/vestauth/vestauth/releases](https://github.com/vestauth/vestauth/releases)
+  </Tab>
+</Tabs>
+
+### Windows
+
+Download the Windows executable from the releases page:
+
+<Steps>
+  <Step title="Download the executable">
+    Choose your architecture:
+    
+    - [vestauth-windows-amd64.zip](https://github.com/vestauth/vestauth/releases/latest/download/vestauth-windows-amd64.zip)
+    - [vestauth-windows-x86_64.zip](https://github.com/vestauth/vestauth/releases/latest/download/vestauth-windows-x86_64.zip)
+    
+    <Note>
+      Most modern Windows systems use `amd64` (64-bit).
+    </Note>
+  </Step>
+
+  <Step title="Extract the ZIP file">
+    Unzip the downloaded file to extract `vestauth.exe`.
+  </Step>
+
+  <Step title="Add to PATH (optional)">
+    Move `vestauth.exe` to a directory in your PATH, or add its location to your PATH environment variable.
+    
+    Alternatively, run it directly:
+    
+    ```powershell
+    .\vestauth.exe agent init
+    ```
+  </Step>
+
+  <Step title="Initialize an agent">
+    ```powershell
+    vestauth agent init
+    ```
+    
+    This creates your agent identity in `.env`.
+  </Step>
+</Steps>
+
+<Warning>
+  Windows Defender may flag the executable. This is a false positive common with unsigned executables. You can safely allow it.
+</Warning>
+
+## Verify Installation
+
+After installing via any method, verify Vestauth is working:
+
+<CodeGroup>
+
+```bash Check Version
+vestauth --version
+# vestauth/0.22.1 linux-x64 node-v20.x.x
+```
+
+```bash View Help
+vestauth --help
+# Usage: vestauth [options] [command]
+# 
+# web-bot-auth for agents
+# 
+# Options:
+#   -V, --version   output the version number
+#   -h, --help      display help for command
+# ...
+```
+
+```bash Test Agent Init
+vestauth agent init
+# ✔ agent created (.env/AGENT_UID=agent-4b94ccd425e939fac5016b6b)
+```
+
+</CodeGroup>
+
+## Platform Support
+
+Vestauth is tested and supported on:
+
+| Platform | Architecture | Status |
+|----------|--------------|--------|
+| macOS | Intel (x86_64) | ✅ Supported |
+| macOS | Apple Silicon (arm64) | ✅ Supported |
+| Linux | x86_64 | ✅ Supported |
+| Linux | ARM64 | ✅ Supported |
+| Windows | amd64 | ✅ Supported |
+| Windows | x86_64 | ✅ Supported |
+
+## Installation Stats
+
+<CardGroup cols={2}>
+  <Card title="npm Downloads" icon="download">
+    ![npm downloads](https://img.shields.io/npm/dm/vestauth)
+    
+    View on [npmjs.com](https://www.npmjs.com/package/vestauth)
+  </Card>
+  
+  <Card title="GitHub Releases" icon="github">
+    ![GitHub downloads](https://img.shields.io/github/downloads/vestauth/vestauth/total)
+    
+    View [releases](https://github.com/vestauth/vestauth/releases)
+  </Card>
+</CardGroup>
+
+## Troubleshooting
+
+<AccordionGroup>
+  <Accordion title="Command not found after npm install">
+    If `vestauth` is not found after npm installation:
+    
+    1. Check if global npm bin is in your PATH:
+       ```bash
+       npm config get prefix
+       ```
+    
+    2. Add npm global bin to PATH:
+       ```bash
+       export PATH="$(npm config get prefix)/bin:$PATH"
+       ```
+    
+    3. Or use npx:
+       ```bash
+       npx vestauth agent init
+       ```
+  </Accordion>
+
+  <Accordion title="Permission denied on Linux/macOS">
+    If you get permission errors when installing globally:
+    
+    1. Use sudo (not recommended):
+       ```bash
+       sudo npm i -g vestauth
+       ```
+    
+    2. Or configure npm to use a different directory:
+       ```bash
+       mkdir ~/.npm-global
+       npm config set prefix '~/.npm-global'
+       export PATH=~/.npm-global/bin:$PATH
+       npm i -g vestauth
+       ```
+  </Accordion>
+
+  <Accordion title="Windows executable blocked by antivirus">
+    Windows Defender may flag `vestauth.exe` as potentially harmful:
+    
+    1. This is a false positive due to the executable being unsigned
+    2. Click "More info" → "Run anyway" to allow it
+    3. Alternatively, add an exception in Windows Defender
+    
+    The source code is open and can be verified at [github.com/vestauth/vestauth](https://github.com/vestauth/vestauth)
+  </Accordion>
+
+  <Accordion title="curl install fails">
+    If the curl install script fails:
+    
+    1. Check your internet connection
+    2. Verify curl is installed: `curl --version`
+    3. Try downloading manually from GitHub releases
+    4. Check for proxy or firewall issues
+    
+    You can also inspect the install script:
+    ```bash
+    curl -sfS https://vestauth.sh
+    ```
+  </Accordion>
+</AccordionGroup>
+
+## Updating Vestauth
+
+Keep Vestauth up to date:
+
+<CodeGroup>
+
+```bash npm
+npm update -g vestauth
+```
+
+```bash curl
+curl -sfS https://vestauth.sh | sh
+# Re-running the install script updates to latest version
+```
+
+```bash GitHub Releases
+# Download latest release and replace existing binary
+curl -L -o vestauth.tar.gz "https://github.com/vestauth/vestauth/releases/latest/download/vestauth-$(uname -s)-$(uname -m).tar.gz"
+tar -xzf vestauth.tar.gz
+```
+
+</CodeGroup>
+
+## Next Steps
+
+Now that Vestauth is installed:
+
+<CardGroup cols={2}>
+  <Card
+    title="Quickstart Guide"
+    icon="rocket"
+    href="/quickstart"
+  >
+    Create your first agent and make authenticated requests
+  </Card>
+  <Card
+    title="CLI Reference"
+    icon="terminal"
+    href="/cli/overview"
+  >
+    Learn all available Vestauth commands
+  </Card>
+  <Card
+    title="Use as a Library"
+    icon="book"
+    href="/library/overview"
+  >
+    Integrate Vestauth into your code
+  </Card>
+  <Card
+    title="Build Tools"
+    icon="hammer"
+    href="/advanced/building-tools"
+  >
+    Create authenticated APIs for agents
+  </Card>
+</CardGroup>

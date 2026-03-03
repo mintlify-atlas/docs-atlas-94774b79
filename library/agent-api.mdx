@@ -1,0 +1,386 @@
+---
+title: 'Agent API'
+description: 'Create agent identities and sign HTTP requests'
+---
+
+## Overview
+
+The Agent API provides methods for creating agent identities, generating signed request headers, and rotating cryptographic keys. It reads credentials from environment variables (`.env`) when not explicitly provided.
+
+```javascript
+const vestauth = require('vestauth')
+
+// Initialize agent
+await vestauth.agent.init()
+
+// Generate signed headers
+const headers = await vestauth.agent.headers('GET', 'https://api.example.com/data')
+
+// Rotate keys
+await vestauth.agent.rotate(uid, privateJwk)
+```
+
+---
+
+## agent.init()
+
+Creates (or reuses) an Ed25519 keypair, registers the agent with the Vestauth server, and writes credentials to `.env`.
+
+### Signature
+
+```typescript
+agent.init(hostname?: string | null): Promise<{
+  AGENT_PUBLIC_JWK: PublicJwk
+  AGENT_UID: string
+  path: string
+  isNew: boolean
+}>
+```
+
+### Parameters
+
+<ParamField path="hostname" type="string" optional>
+  The Vestauth server hostname. Defaults to `AGENT_HOSTNAME` environment variable, then `api.vestauth.com`.
+  
+  - Use `https://` scheme for production servers
+  - Use `http://localhost:3000` for local development
+  - If no scheme provided, `https://` is assumed
+</ParamField>
+
+### Returns
+
+<ResponseField name="AGENT_UID" type="string" required>
+  The unique agent identifier (e.g., `agent-4b94ccd425e939fac5016b6b`)
+</ResponseField>
+
+<ResponseField name="AGENT_PUBLIC_JWK" type="PublicJwk" required>
+  The agent's public key in JWK format
+</ResponseField>
+
+<ResponseField name="path" type="string" required>
+  Path to the `.env` file where credentials were written (typically `.env`)
+</ResponseField>
+
+<ResponseField name="isNew" type="boolean" required>
+  `true` if a new agent was created, `false` if existing keys were reused
+</ResponseField>
+
+### Example
+
+```javascript
+const vestauth = require('vestauth')
+
+const result = await vestauth.agent.init()
+
+console.log('Agent UID:', result.AGENT_UID)
+console.log('Saved to:', result.path)
+console.log('Is new agent:', result.isNew)
+```
+
+### Custom Hostname
+
+```javascript
+// Use a custom Vestauth server
+const result = await vestauth.agent.init('https://vestauth.yourcompany.com')
+
+// Local development
+const result = await vestauth.agent.init('http://localhost:3000')
+```
+
+### Environment Variables Written
+
+This method writes the following to `.env`:
+
+```ini .env
+AGENT_UID="agent-4b94ccd425e939fac5016b6b"
+AGENT_PUBLIC_JWK='{"crv":"Ed25519","x":"py2xNaAfjKZiau-jtmJls6h_3n8xJ1Ur0ie-n9b8zWg","kty":"OKP","kid":"B0u80Gw28W9U2Jl5t_EBiWeBajO2104kOYZ9Ikucl5I"}'
+AGENT_PRIVATE_JWK='{"crv":"Ed25519","d":"Z9vbwN-3eiFMVv_TPWXOxqSMJAT21kZvejWi72yiAaQ","x":"py2xNaAfjKZiau-jtmJls6h_3n8xJ1Ur0ie-n9b8zWg","kty":"OKP","kid":"B0u80Gw28W9U2Jl5t_EBiWeBajO2104kOYZ9Ikucl5I"}'
+AGENT_HOSTNAME="https://vestauth.yourcompany.com"  # Only if custom hostname provided
+```
+
+<Warning>
+  Never commit `.env` files containing `AGENT_PRIVATE_JWK` to version control. Add `.env` to your `.gitignore`.
+</Warning>
+
+---
+
+## agent.headers()
+
+Generates RFC 9421 HTTP Message Signature headers for authenticating requests.
+
+### Signature
+
+```typescript
+agent.headers(
+  httpMethod: HttpMethod,
+  uri: string,
+  uid?: string | null,
+  privateJwk?: string | null,
+  tag?: string,
+  nonce?: string | null
+): Promise<SignatureHeaders>
+```
+
+### Parameters
+
+<ParamField path="httpMethod" type="string" required>
+  The HTTP method (e.g., `GET`, `POST`, `PUT`, `DELETE`)
+</ParamField>
+
+<ParamField path="uri" type="string" required>
+  The full request URI including scheme, host, and path (e.g., `https://api.example.com/data`)
+</ParamField>
+
+<ParamField path="uid" type="string" optional>
+  Agent UID. If not provided, reads from `AGENT_UID` environment variable.
+</ParamField>
+
+<ParamField path="privateJwk" type="string" optional>
+  Private JWK as JSON string. If not provided, reads from `AGENT_PRIVATE_JWK` environment variable.
+</ParamField>
+
+<ParamField path="tag" type="string" optional default="web-bot-auth">
+  Signature tag for the request. Use `web-bot-auth` for agent authentication.
+</ParamField>
+
+<ParamField path="nonce" type="string" optional>
+  Custom nonce value. If not provided, a random nonce is generated.
+</ParamField>
+
+### Returns
+
+<ResponseField name="Signature" type="string" required>
+  The signature header value (e.g., `sig1=:UW6A7j8jo+gQxd+EeVgD...==:`)
+</ResponseField>
+
+<ResponseField name="Signature-Input" type="string" required>
+  The signature input parameters including algorithm, key ID, timestamps, and nonce
+</ResponseField>
+
+<ResponseField name="Signature-Agent" type="string" required>
+  The agent discovery URL (e.g., `sig1="https://agent-609a4fd2ebf4e6347108c517.api.vestauth.com"`)
+</ResponseField>
+
+### Example
+
+```javascript
+const vestauth = require('vestauth')
+
+// Generate headers using .env credentials
+const headers = await vestauth.agent.headers(
+  'GET',
+  'https://api.vestauth.com/whoami'
+)
+
+console.log(headers)
+// {
+//   Signature: 'sig1=:UW6A7j8jo+gQxd+EeVgDddY51ZOc9plrSaupW/N53hQ...==:',
+//   'Signature-Input': 'sig1=("@authority");created=1770396357;keyid="FGzgs758DBGnI1S0B...";alg="ed25519";expires=1770396657;nonce="PrE7A6I_5fWnxBsB...";tag="web-bot-auth"',
+//   'Signature-Agent': 'sig1="https://agent-609a4fd2ebf4e6347108c517.api.vestauth.com"'
+// }
+```
+
+### Making HTTP Requests
+
+<Tabs>
+  <Tab title="fetch">
+    ```javascript
+    const vestauth = require('vestauth')
+    
+    const url = 'https://api.vestauth.com/whoami'
+    const headers = await vestauth.agent.headers('GET', url)
+    
+    const response = await fetch(url, {
+      method: 'GET',
+      headers: headers
+    })
+    
+    const data = await response.json()
+    console.log(data)
+    ```
+  </Tab>
+  <Tab title="axios">
+    ```javascript
+    const vestauth = require('vestauth')
+    const axios = require('axios')
+    
+    const url = 'https://api.vestauth.com/whoami'
+    const headers = await vestauth.agent.headers('GET', url)
+    
+    const response = await axios.get(url, { headers })
+    console.log(response.data)
+    ```
+  </Tab>
+  <Tab title="Express/Node.js">
+    ```javascript
+    const vestauth = require('vestauth')
+    const https = require('https')
+    
+    const url = 'https://api.vestauth.com/whoami'
+    const headers = await vestauth.agent.headers('GET', url)
+    
+    https.get(url, { headers }, (res) => {
+      let data = ''
+      res.on('data', chunk => data += chunk)
+      res.on('end', () => console.log(JSON.parse(data)))
+    })
+    ```
+  </Tab>
+</Tabs>
+
+### Custom Credentials
+
+```javascript
+// Override UID and private key
+const headers = await vestauth.agent.headers(
+  'POST',
+  'https://api.example.com/data',
+  'agent-custom-123',
+  '{"crv":"Ed25519","d":"...","x":"...","kty":"OKP"}'
+)
+```
+
+---
+
+## agent.rotate()
+
+Rotates the agent's keypair by generating new keys and updating the Vestauth server.
+
+### Signature
+
+```typescript
+agent.rotate(
+  uid: string,
+  privateJwk: string,
+  tag?: string,
+  nonce?: string | null
+): Promise<{
+  AGENT_PUBLIC_JWK: PublicJwk
+  AGENT_UID: string
+  path: string
+}>
+```
+
+### Parameters
+
+<ParamField path="uid" type="string" required>
+  The agent UID to rotate keys for
+</ParamField>
+
+<ParamField path="privateJwk" type="string" required>
+  Current private JWK as JSON string (used to authenticate the rotation request)
+</ParamField>
+
+<ParamField path="tag" type="string" optional default="web-bot-auth">
+  Signature tag for the rotation request
+</ParamField>
+
+<ParamField path="nonce" type="string" optional>
+  Custom nonce value for the rotation request
+</ParamField>
+
+### Returns
+
+<ResponseField name="AGENT_PUBLIC_JWK" type="PublicJwk" required>
+  The new public key in JWK format
+</ResponseField>
+
+<ResponseField name="AGENT_UID" type="string" required>
+  The agent UID (unchanged)
+</ResponseField>
+
+<ResponseField name="path" type="string" required>
+  Path to the `.env` file where new credentials were written
+</ResponseField>
+
+### Example
+
+```javascript
+const vestauth = require('vestauth')
+require('dotenv').config()
+
+// Read current credentials from .env
+const uid = process.env.AGENT_UID
+const privateJwk = process.env.AGENT_PRIVATE_JWK
+
+// Rotate to new keys
+const result = await vestauth.agent.rotate(uid, privateJwk)
+
+console.log('Keys rotated successfully')
+console.log('New public key:', result.AGENT_PUBLIC_JWK)
+```
+
+### When to Rotate Keys
+
+Rotate your agent's keys when:
+
+- You suspect the private key has been compromised
+- Following security best practices (e.g., quarterly rotation)
+- Migrating to new infrastructure
+- After a security incident
+
+<Info>
+  Key rotation is seamless - the agent UID remains the same, only the cryptographic keys change.
+</Info>
+
+### Environment Variables Updated
+
+This method updates the following in `.env`:
+
+```ini .env
+AGENT_PUBLIC_JWK='{"crv":"Ed25519","x":"NEW_PUBLIC_KEY...","kty":"OKP","kid":"NEW_KID..."}'
+AGENT_PRIVATE_JWK='{"crv":"Ed25519","d":"NEW_PRIVATE_KEY...","x":"NEW_PUBLIC_KEY...","kty":"OKP","kid":"NEW_KID..."}'
+```
+
+---
+
+## Type Definitions
+
+```typescript
+type HttpMethod = 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE' | 'OPTIONS' | 'HEAD' | (string & {})
+
+interface PublicJwk {
+  kty: 'OKP'
+  crv: 'Ed25519'
+  x: string
+  kid?: string
+  [prop: string]: unknown
+}
+
+interface PrivateJwk extends PublicJwk {
+  d: string
+}
+
+interface SignatureHeaders {
+  Signature: string
+  'Signature-Input': string
+  'Signature-Agent': string
+}
+```
+
+## Error Handling
+
+```javascript
+try {
+  const result = await vestauth.agent.init()
+  console.log('Agent initialized:', result.AGENT_UID)
+} catch (error) {
+  console.error('Failed to initialize agent:', error.message)
+}
+
+try {
+  const headers = await vestauth.agent.headers('GET', url)
+} catch (error) {
+  if (error.message.includes('missing')) {
+    console.error('Missing credentials in .env')
+  } else if (error.message.includes('invalid')) {
+    console.error('Invalid private key format')
+  }
+}
+```
+
+## See Also
+
+- [Primitives API](/library/primitives-api) - Low-level signing operations
+- [Tool API](/library/tool-api) - Verify agent requests
+- [CLI Agent Commands](/cli/agent-commands) - Command-line interface
