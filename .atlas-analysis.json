@@ -1,0 +1,137 @@
+{
+  "projectType": "cli-tool",
+  "projectName": "Vestauth",
+  "projectDescription": "Cryptographic identity and HTTP message signing for AI agents and autonomous systems",
+  "theme": "aspen",
+  "primaryColor": "#0A7F5A",
+  "lightColor": "#10B981",
+  "darkColor": "#065F46",
+  "navigation": {
+    "tabs": [
+      {
+        "tab": "Documentation",
+        "groups": [
+          {
+            "group": "Get Started",
+            "pages": [
+              "introduction",
+              "quickstart",
+              "installation"
+            ]
+          },
+          {
+            "group": "Core Concepts",
+            "pages": [
+              "concepts/identity",
+              "concepts/authentication",
+              "concepts/tools",
+              "concepts/standards"
+            ]
+          },
+          {
+            "group": "CLI Reference",
+            "pages": [
+              "cli/overview",
+              "cli/agent-commands",
+              "cli/tool-commands",
+              "cli/server-commands",
+              "cli/primitives-commands"
+            ]
+          },
+          {
+            "group": "Library Reference",
+            "pages": [
+              "library/overview",
+              "library/agent-api",
+              "library/tool-api",
+              "library/primitives-api",
+              "library/server-api"
+            ]
+          },
+          {
+            "group": "Self-Hosting",
+            "pages": [
+              "self-hosting/overview",
+              "self-hosting/setup",
+              "self-hosting/configuration",
+              "self-hosting/database"
+            ]
+          },
+          {
+            "group": "Advanced",
+            "pages": [
+              "advanced/building-tools",
+              "advanced/key-rotation",
+              "advanced/security"
+            ]
+          },
+          {
+            "group": "Resources",
+            "pages": [
+              "resources/faq",
+              "resources/comparison",
+              "resources/contributing"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "API Reference",
+        "groups": [
+          {
+            "group": "Agent API",
+            "pages": [
+              "api/agent/init",
+              "api/agent/headers",
+              "api/agent/rotate"
+            ]
+          },
+          {
+            "group": "Tool API",
+            "pages": [
+              "api/tool/verify"
+            ]
+          },
+          {
+            "group": "Primitives API",
+            "pages": [
+              "api/primitives/keypair",
+              "api/primitives/headers",
+              "api/primitives/verify"
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  "keyFeatures": [
+    "Cryptographic agent identities using Ed25519 keypairs",
+    "RFC 9421 HTTP message signing",
+    "Web-Bot-Auth protocol implementation",
+    "Drop-in curl wrapper for signed requests",
+    "Self-hostable server infrastructure",
+    "Agent verification and authentication",
+    "Key rotation support",
+    "Public key discovery via .well-known endpoints"
+  ],
+  "publicApiSurface": [
+    "vestauth agent init",
+    "vestauth agent curl",
+    "vestauth agent headers",
+    "vestauth agent rotate",
+    "vestauth tool verify",
+    "vestauth server start",
+    "vestauth server db:create",
+    "vestauth server db:migrate",
+    "vestauth primitives keypair",
+    "vestauth primitives headers",
+    "vestauth primitives verify",
+    "agent.init()",
+    "agent.headers()",
+    "agent.rotate()",
+    "tool.verify()",
+    "primitives.keypair()",
+    "primitives.headers()",
+    "primitives.verify()"
+  ]
+}
