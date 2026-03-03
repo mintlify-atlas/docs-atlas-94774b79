@@ -421,6 +421,20 @@ app.listen(3000, () => {
 
 ---
 
+## Deprecated Alias
+
+<Note>
+  `vestauth.provider` is a deprecated alias for `vestauth.tool`. Both provide the same `verify()` method. Use `vestauth.tool` in new code.
+</Note>
+
+```javascript
+// Deprecated (still works)
+const agent = await vestauth.provider.verify(method, url, headers)
+
+// Recommended
+const agent = await vestauth.tool.verify(method, url, headers)
+```
+
 ## See Also
 
 - [Agent API](/library/agent-api) - Create agents and sign requests

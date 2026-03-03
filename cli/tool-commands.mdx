@@ -192,8 +192,14 @@ async function getPublicKey(agentUid) {
 
 Invalidate cache periodically or on key rotation events.
 
+## Deprecated Command
+
+<Note>
+  `vestauth provider verify` is a deprecated alias for `vestauth tool verify`. Both commands work identically. Use `tool verify` in new scripts.
+</Note>
+
 ## Related
 
 - [Agent Commands](/cli/agent-commands) - Create identities and sign requests
 - [Primitives verify](/cli/primitives-commands#primitives-verify) - Low-level signature verification
-- [Library: tool.verify()](/library/tool-verify) - Programmatic verification
+- [Library: tool.verify()](/api/tool/verify) - Programmatic verification
